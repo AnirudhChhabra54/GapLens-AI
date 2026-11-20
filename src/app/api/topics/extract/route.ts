@@ -123,11 +123,51 @@ export async function POST(request: Request) {
         const key = topicKey(t.title, t.unitModule);
         if (titleToId.has(key)) continue;
 
+        // Resolve or create parent unit module topic if present
+        let parentId: string | null = null;
+        if (t.unitModule) {
+          const parentKey = topicKey(t.unitModule, null);
+          if (titleToId.has(parentKey)) {
+            parentId = titleToId.get(parentKey)!;
+          } else {
+            const { data: parentTopic } = await admin
+              .from("topics")
+              .insert({
+                workspace_id: workspaceId,
+                user_id: auth.userId,
+                parent_id: null,
+                title: t.unitModule,
+                unit_module: t.unitModule,
+                order_index: t.orderIndex,
+                learning_objectives: [`Master core principles of ${t.unitModule}`],
+                extraction_confidence: 0.95,
+                exam_frequency: 0,
+                exam_total_marks: 0,
+                exam_weight: 0,
+                current_mastery: 45.0,
+                classification: "unassessed",
+                evidence_level: "early_signal",
+                total_attempts: 0,
+                correct_attempts: 0,
+                blind_spot_count: 0,
+              })
+              .select()
+              .maybeSingle();
+
+            if (parentTopic) {
+              parentId = parentTopic.id;
+              titleToId.set(parentKey, parentId);
+              insertedTopics.push(parentTopic);
+            }
+          }
+        }
+
         const { data: topicRow, error: insertErr } = await admin
           .from("topics")
           .insert({
             workspace_id: workspaceId,
             user_id: auth.userId,
+            parent_id: parentId,
             title: t.title,
             unit_module: t.unitModule,
             order_index: t.orderIndex,
@@ -160,13 +200,13 @@ export async function POST(request: Request) {
         insertedTopics.push(topicRow);
         titleToId.set(key, topicRow.id);
         titleToId.set(topicKey(topicRow.title, topicRow.unit_module), topicRow.id);
+        titleToId.set(topicKey(topicRow.title, null), topicRow.id);
       }
 
       for (const prereq of extraction.prerequisites) {
-        const topicId = titleToId.get(topicKey(prereq.topicTitle, null)) ||
-          Array.from(titleToId.entries()).find(([key]) => key.endsWith(`::${prereq.topicTitle.trim().toLowerCase()}`))?.[1];
-        const prerequisiteTopicId = titleToId.get(topicKey(prereq.prereqTitle, null)) ||
-          Array.from(titleToId.entries()).find(([key]) => key.endsWith(`::${prereq.prereqTitle.trim().toLowerCase()}`))?.[1];
+        // Exact key matching: unit-qualified title first, fallback to unique title
+        const topicId = titleToId.get(topicKey(prereq.topicTitle, null));
+        const prerequisiteTopicId = titleToId.get(topicKey(prereq.prereqTitle, null));
 
         if (!topicId || !prerequisiteTopicId || topicId === prerequisiteTopicId) continue;
 
@@ -198,13 +238,40 @@ export async function POST(request: Request) {
     } else {
       const demoIdByKey = new Map<string, string>();
 
+      // In mock/demo mode, create unit topics and link parent_id
       extraction.topics.forEach((t) => {
+        let parentId: string | null = null;
+        if (t.unitModule) {
+          const parentKey = topicKey(t.unitModule, null);
+          if (demoIdByKey.has(parentKey)) {
+            parentId = demoIdByKey.get(parentKey)!;
+          } else {
+            parentId = crypto.randomUUID();
+            demoIdByKey.set(parentKey, parentId);
+            insertedTopics.push({
+              id: parentId,
+              workspace_id: workspaceId,
+              parent_id: null,
+              title: t.unitModule,
+              unit_module: t.unitModule,
+              order_index: t.orderIndex,
+              learning_objectives: [`Master ${t.unitModule}`],
+              extraction_confidence: 0.95,
+              current_mastery: 45.0,
+              classification: "unassessed",
+              evidence_level: "early_signal",
+              exam_weight: 0,
+            });
+          }
+        }
+
         const id = crypto.randomUUID();
         demoIdByKey.set(topicKey(t.title, t.unitModule), id);
         demoIdByKey.set(topicKey(t.title, null), id);
         insertedTopics.push({
           id,
           workspace_id: workspaceId,
+          parent_id: parentId,
           title: t.title,
           unit_module: t.unitModule,
           order_index: t.orderIndex,

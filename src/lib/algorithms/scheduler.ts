@@ -137,13 +137,13 @@ export function generateRevisionPlan(params: PlanGenerationParams): RevisionPlan
   const totalAvailableMinutes = validDays * dailyMinutes;
 
   // Preserve completed or skipped tasks from previous plan version
-  const historicalCompleted = existingTasks.filter(
-    (t) => t.status === "completed" || t.status === "skipped"
-  );
-  const completedMinutes = historicalCompleted.reduce(
-    (sum, t) => sum + (t.allocatedMinutes || 0),
-    0
-  );
+  // If a task had dayNumber > validDays, clamp it to validDays so history is never lost.
+  const historicalCompleted = existingTasks
+    .filter((t) => t.status === "completed" || t.status === "skipped")
+    .map((t) => ({
+      ...t,
+      dayNumber: Math.min(validDays, Math.max(1, t.dayNumber)),
+    }));
 
   // Candidate task pool generated from prioritized topics (ordered by priority DESC)
   interface CandidateTask {
@@ -219,13 +219,11 @@ export function generateRevisionPlan(params: PlanGenerationParams): RevisionPlan
     const dayTasks: ScheduledTask[] = [];
     let taskOrder = 1;
 
-    // Check if any completed tasks belong to this day in history
+    // All completed or skipped tasks for this day are retained unconditionally
     const historicalForDay = historicalCompleted.filter((t) => t.dayNumber === dayNum);
     for (const hist of historicalForDay) {
-      if (dayAllocated + hist.allocatedMinutes <= dailyMinutes) {
-        dayTasks.push({ ...hist, taskOrder: taskOrder++ });
-        dayAllocated += hist.allocatedMinutes;
-      }
+      dayTasks.push({ ...hist, taskOrder: taskOrder++ });
+      dayAllocated += hist.allocatedMinutes;
     }
 
     // Greedily pack unscheduled candidate tasks that fit into remaining daily budget
@@ -292,6 +290,12 @@ export function generateRevisionPlan(params: PlanGenerationParams): RevisionPlan
     totalAllocatedAcrossDays += dayAllocated;
   }
 
+  // Compute actual completed minutes from tasks retained across all days
+  const actualCompletedMinutes = days
+    .flatMap((d) => d.tasks)
+    .filter((t) => t.status === "completed")
+    .reduce((sum, t) => sum + (t.allocatedMinutes || 0), 0);
+
   // Any remaining candidate tasks in the pool could not be fitted in the time budget
   const deferredTasksCount = Math.max(0, candidatePool.length - scheduledCandidateIndices.size);
 
@@ -304,7 +308,7 @@ export function generateRevisionPlan(params: PlanGenerationParams): RevisionPlan
     totalDays: validDays,
     totalAllocatedMinutes: totalAllocatedAcrossDays,
     totalAvailableMinutes,
-    completedMinutes,
+    completedMinutes: actualCompletedMinutes,
     isActive: true,
     days,
     deferredTasksCount,

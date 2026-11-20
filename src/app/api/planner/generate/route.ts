@@ -113,7 +113,9 @@ export async function POST(request: Request) {
           id: t.id,
           planId: t.plan_id,
           topicId: t.topic_id,
-          topicTitle: t.title.split(": ")[1] || t.title,
+          topicTitle: (t.title || "").includes(": ")
+            ? (t.title || "").slice((t.title || "").indexOf(": ") + 2).trim()
+            : t.title,
           dayNumber: t.day_number,
           taskOrder: t.task_order,
           taskType: t.task_type,
@@ -134,7 +136,9 @@ export async function POST(request: Request) {
         id: t.id,
         planId: t.plan_id,
         topicId: t.topic_id,
-        topicTitle: t.title.split(": ")[1] || t.title,
+        topicTitle: (t.title || "").includes(": ")
+          ? (t.title || "").slice((t.title || "").indexOf(": ") + 2).trim()
+          : t.title,
         dayNumber: t.day_number,
         taskOrder: t.task_order,
         taskType: t.task_type,
@@ -208,6 +212,13 @@ export async function POST(request: Request) {
     });
 
     if (isLiveDb) {
+      // Deactivate any existing active plans in the workspace
+      await admin
+        .from("revision_plans")
+        .update({ is_active: false })
+        .eq("workspace_id", workspaceId)
+        .neq("id", planOverview.id);
+
       // Upsert revision plan
       const { error: planUpsertError } = await admin.from("revision_plans").upsert({
         id: planOverview.id,

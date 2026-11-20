@@ -388,9 +388,15 @@ export function computeTopicExamWeights(
     totalMarksAll += q.marks || 0;
   }
 
+  const totalQuestionsAll = validQuestions.length;
   for (const topic of topics) {
     const stats = topicStats.get(topic.id) || { freq: 0, marks: 0 };
-    const normalizedWeight = totalMarksAll > 0 ? stats.marks / totalMarksAll : 0.0;
+    const normalizedWeight =
+      totalMarksAll > 0
+        ? stats.marks / totalMarksAll
+        : totalQuestionsAll > 0
+        ? stats.freq / totalQuestionsAll
+        : 0.0;
 
     result.set(topic.id, {
       topicId: topic.id,
@@ -417,7 +423,7 @@ export function extractPastPaperQuestionsFromText(
 
   let currentQNumber: string | null = null;
   let currentQText: string[] = [];
-  let currentMarks = 10;
+  let currentMarks: number | null = null;
   let qIndex = 1;
 
   const flushCurrent = () => {
@@ -429,7 +435,7 @@ export function extractPastPaperQuestionsFromText(
           paperName: null,
           questionNumber: currentQNumber,
           questionText: fullText,
-          marks: currentMarks,
+          marks: currentMarks ?? 0,
           documentId,
           workspaceId,
         });
@@ -437,7 +443,7 @@ export function extractPastPaperQuestionsFromText(
     }
     currentQNumber = null;
     currentQText = [];
-    currentMarks = 10;
+    currentMarks = null;
   };
 
   const questionHeaderRegex = /^(?:Question\s*([0-9IVX]+)|Q([0-9IVX]+)|([0-9]{1,2})\.)[:\.\s-]*(.*)/i;
@@ -455,17 +461,14 @@ export function extractPastPaperQuestionsFromText(
 
       const marksMatch = line.match(marksRegex);
       if (marksMatch) {
-        currentMarks = parseInt(marksMatch[1], 10) || 10;
+        currentMarks = parseInt(marksMatch[1], 10) || null;
       }
-
-      const rest = match[4] ? match[4].replace(marksRegex, "").trim() : "";
-      if (rest) currentQText.push(rest);
-    } else if (currentQNumber) {
+    } else {
+      currentQText.push(line);
       const marksMatch = line.match(marksRegex);
-      if (marksMatch) {
-        currentMarks = parseInt(marksMatch[1], 10) || currentMarks;
+      if (marksMatch && currentMarks === null) {
+        currentMarks = parseInt(marksMatch[1], 10) || null;
       }
-      currentQText.push(line.replace(marksRegex, "").trim());
     }
   }
 

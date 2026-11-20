@@ -18,6 +18,7 @@ import {
   DEMO_TOPICS,
   DEMO_ANSWERS,
   DEMO_QUIZ_QUESTIONS,
+  DEMO_DOCUMENTS,
 } from "@/lib/demo/os-cs301-fixture";
 
 export async function GET(request: Request) {
@@ -105,16 +106,42 @@ export async function GET(request: Request) {
       topicMap.set(t.id, t);
     }
 
+    // Fetch chunk metadata to populate true documentId and docType in citations
+    const chunkIds = Array.from(
+      new Set(
+        Array.from(questionMap.values())
+          .map((q) => q.source_chunk_id)
+          .filter(Boolean)
+      )
+    );
+    const chunkMetaMap = new Map<string, { documentId: string; docType: DocumentType }>();
+    if (isLiveDb && chunkIds.length > 0) {
+      const { data: chunksData } = await admin
+        .from("document_chunks")
+        .select("id, document_id, documents(id, doc_type)")
+        .in("id", chunkIds);
+      if (chunksData) {
+        for (const c of chunksData) {
+          const doc = (c as any).documents;
+          chunkMetaMap.set(c.id, {
+            documentId: c.document_id || doc?.id || "",
+            docType: (doc?.doc_type as DocumentType) || "material",
+          });
+        }
+      }
+    }
+
     // Convert answers to EvaluatedAnswerInput for blind-spot aggregation
     const evaluatedAnswerInputs: EvaluatedAnswerInput[] = answers.map((a) => {
       const q = questionMap.get(a.quiz_question_id || a.question_id);
       const t = topicMap.get(a.topic_id);
+      const chunkMeta = q?.source_chunk_id ? chunkMetaMap.get(q.source_chunk_id) : undefined;
 
       const citation: PinnedCitation = {
         chunkId: q?.source_chunk_id || "unavailable",
-        documentId: "",
-        documentName: q?.citation_document_name || "Uploaded course material",
-        docType: "material",
+        documentId: chunkMeta?.documentId || (q as any)?.document_id || (auth.isDemo ? DEMO_DOCUMENTS[0]?.id : ""),
+        documentName: q?.citation_document_name || (auth.isDemo ? DEMO_DOCUMENTS[0]?.filename : "Uploaded course material"),
+        docType: chunkMeta?.docType || (q as any)?.doc_type || "material",
         pageStart: q?.citation_page_start || 1,
         pageEnd: q?.citation_page_end || 1,
         sectionHeading: q?.citation_section || t?.title || null,

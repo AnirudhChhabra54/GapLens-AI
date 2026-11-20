@@ -386,9 +386,9 @@ export async function evaluateSubmission(params: {
 
     const citation: PinnedCitation = {
       chunkId: q.source_chunk_id,
-      documentId: "",
+      documentId: (q as any).document_id || (q as any).documentId || "",
       documentName: q.citation_document_name,
-      docType: "material",
+      docType: (q as any).doc_type || (q as any).docType || "material",
       pageStart: q.citation_page_start,
       pageEnd: q.citation_page_end,
       sectionHeading: q.citation_section || null,

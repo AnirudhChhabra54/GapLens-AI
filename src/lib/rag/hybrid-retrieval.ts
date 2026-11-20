@@ -90,10 +90,13 @@ export function inMemoryRRFSearch(
   const rrfK = query.rrfK ?? DEFAULT_RRF_K;
   const allowedDocTypes = query.allowedDocTypes ?? ["syllabus", "material"];
 
-  // Create doc lookup map
+  // Create doc lookup map (only seed demo documents in demo mode)
+  const isDemoMode = !query.workspaceId || query.workspaceId === DEMO_WORKSPACE_ID;
   const docMap = new Map<string, { filename: string; doc_type: DocumentType }>();
-  for (const doc of DEMO_DOCUMENTS) {
-    docMap.set(doc.id, { filename: doc.filename, doc_type: doc.doc_type });
+  if (isDemoMode) {
+    for (const doc of DEMO_DOCUMENTS) {
+      docMap.set(doc.id, { filename: doc.filename, doc_type: doc.doc_type });
+    }
   }
 
   // Merge custom documentMap if provided
@@ -192,8 +195,12 @@ export function inMemoryRRFSearch(
       page_end: c.chunk.page_end,
       section_heading: c.chunk.section_heading,
       content: c.chunk.content,
-      document_name: docMeta?.filename ?? "Operating Systems Lecture Notes.pdf",
-      doc_type: docMeta?.doc_type ?? "material",
+      document_name:
+        docMeta?.filename ??
+        (c.chunk as any).document_name ??
+        (c.chunk as any).filename ??
+        (isDemoMode ? "Operating Systems Lecture Notes.pdf" : "Course Document"),
+      doc_type: docMeta?.doc_type ?? (c.chunk as any).doc_type ?? "material",
       similarity: Number(c.similarity.toFixed(4)),
       rrf_score: Number(c.rrfScore.toFixed(6)),
     };

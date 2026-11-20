@@ -29,6 +29,7 @@ const ProcessDocumentRequestSchema = z.object({
   docType: z.enum(["syllabus", "material", "past_paper"]).optional(),
   indexVersion: z.number().int().min(1).default(1),
   maxChunks: z.number().int().positive().optional(),
+  ocrText: z.string().optional(),
 });
 
 export async function POST(request: Request) {
@@ -125,9 +126,40 @@ export async function POST(request: Request) {
     // Step 1: Transition -> extracting
     await updateDocumentStatus("extracting", { step: "extracting", startedAt: new Date().toISOString() });
 
-    // Step 2: Fetch and validate file buffer
-    let pdfBuffer: Buffer;
+    // Early size check on base64 input before decoding
     if (fileBase64) {
+      const cleanLen = fileBase64.includes(",") ? fileBase64.split(",")[1].length : fileBase64.length;
+      if ((cleanLen * 3) / 4 > MAX_UPLOAD_BYTES) {
+        return NextResponse.json(
+          { error: "File exceeds maximum allowed size of 50MB." },
+          { status: 413 }
+        );
+      }
+    }
+
+    // Step 2: Fetch and validate file buffer
+    // For live persisted documents with a valid storage path, storage is authoritative.
+    let pdfBuffer: Buffer;
+    if (persistToDb && storagePath) {
+      const { data: fileData, error: downloadErr } = await admin.storage
+        .from("documents")
+        .download(storagePath);
+
+      if (downloadErr || !fileData) {
+        if (!fileBase64) {
+          await updateDocumentStatus("failed", { step: "download_failed", error: downloadErr?.message });
+          return NextResponse.json(
+            { error: "Failed to download document from storage", details: downloadErr?.message },
+            { status: 500 }
+          );
+        }
+        // Validated fallback if storage download temporary issue occurs
+        const cleanBase64 = fileBase64.includes(",") ? fileBase64.split(",")[1] : fileBase64;
+        pdfBuffer = Buffer.from(cleanBase64, "base64");
+      } else {
+        pdfBuffer = Buffer.from(await fileData.arrayBuffer());
+      }
+    } else if (fileBase64) {
       // Clean possible data URI scheme prefix (e.g. data:application/pdf;base64,)
       const cleanBase64 = fileBase64.includes(",") ? fileBase64.split(",")[1] : fileBase64;
       pdfBuffer = Buffer.from(cleanBase64, "base64");
@@ -158,18 +190,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // Step 3: Run Text Extraction (PDF or plain text/Markdown)
+    // Step 3: Run Text Extraction (OCR-resolved text, PDF or plain text/Markdown)
+    const { ocrText } = parsed.data;
     const lowerFilename = filename.toLowerCase();
     const isTextFile =
       lowerFilename.endsWith(".txt") ||
       lowerFilename.endsWith(".md") ||
       lowerFilename.endsWith(".markdown");
-
     let parseResult;
-    if (isTextFile) {
-      const text = pdfBuffer.toString("utf-8");
-      // Split into sections by markdown headings, form feeds, or double line-breaks
-      const sections = text.split(/(?=\n#{1,3}\s)|\f/);
+
+    if (ocrText && ocrText.trim().length > 0) {
+      const sections = ocrText.split(/(?=\n#{1,3}\s)|\f/);
       const pages = sections
         .map((s, idx) => ({
           pageNumber: idx + 1,
@@ -181,12 +212,33 @@ export async function POST(request: Request) {
       parseResult = {
         filename,
         pageCount: Math.max(1, pages.length),
-        extractedCharCount: text.length,
-        pages: pages.length > 0 ? pages : [{ pageNumber: 1, text: text.trim(), charCount: text.trim().length }],
+        extractedCharCount: ocrText.length,
+        pages: pages.length > 0 ? pages : [{ pageNumber: 1, text: ocrText.trim(), charCount: ocrText.trim().length }],
         needsOcr: false,
       };
     } else {
-      parseResult = await parsePdfBuffer(pdfBuffer, { filename });
+      if (isTextFile) {
+        const text = pdfBuffer.toString("utf-8");
+        // Split into sections by markdown headings, form feeds, or double line-breaks
+        const sections = text.split(/(?=\n#{1,3}\s)|\f/);
+        const pages = sections
+          .map((s, idx) => ({
+            pageNumber: idx + 1,
+            text: s.trim(),
+            charCount: s.trim().length,
+          }))
+          .filter((p) => p.charCount > 0);
+
+        parseResult = {
+          filename,
+          pageCount: Math.max(1, pages.length),
+          extractedCharCount: text.length,
+          pages: pages.length > 0 ? pages : [{ pageNumber: 1, text: text.trim(), charCount: text.trim().length }],
+          needsOcr: false,
+        };
+      } else {
+        parseResult = await parsePdfBuffer(pdfBuffer, { filename });
+      }
     }
 
     if (parseResult.needsOcr) {

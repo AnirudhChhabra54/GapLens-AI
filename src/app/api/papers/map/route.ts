@@ -142,6 +142,7 @@ export async function POST(request: Request) {
       );
     }
 
+    const targetDocId = documentId || (questions?.[0]?.documentId ?? (chunks[0]?.document_id ?? (auth.isDemo ? DEMO_DOCUMENTS[0].id : crypto.randomUUID())));
     let paperInputs: PaperQuestionInput[] = [];
 
     if (questions && questions.length > 0) {
@@ -151,7 +152,7 @@ export async function POST(request: Request) {
         questionNumber: q.questionNumber,
         questionText: q.questionText,
         marks: q.marks,
-        documentId: q.documentId || documentId || (auth.isDemo ? DEMO_DOCUMENTS[0].id : crypto.randomUUID()),
+        documentId: q.documentId || targetDocId,
         workspaceId,
       }));
     } else {
@@ -160,7 +161,6 @@ export async function POST(request: Request) {
         ? chunks.filter((c) => c.document_id === documentId)
         : chunks;
       const paperText = relevantChunks.map((c) => c.content).join("\n\n");
-      const targetDocId = documentId || (relevantChunks[0]?.document_id ?? (auth.isDemo ? DEMO_DOCUMENTS[0].id : crypto.randomUUID()));
 
       paperInputs = extractPastPaperQuestionsFromText(paperText, targetDocId, workspaceId);
 
@@ -196,10 +196,17 @@ export async function POST(request: Request) {
       created_at: new Date().toISOString(),
     }));
 
-    const examWeightsMap = computeTopicExamWeights(topics, simulatedPaperRows);
+    let examWeightsMap = computeTopicExamWeights(topics, simulatedPaperRows);
 
     if (isLiveDb) {
-      // Insert paper_questions rows
+      // Deduplicate: remove any earlier mapped questions for this past paper document
+      await admin
+        .from("paper_questions")
+        .delete()
+        .eq("workspace_id", workspaceId)
+        .eq("document_id", targetDocId);
+
+      // Insert fresh paper_questions rows
       const { error: paperInsertError } = await admin
         .from("paper_questions")
         .insert(simulatedPaperRows);
@@ -209,6 +216,15 @@ export async function POST(request: Request) {
           { status: 500 }
         );
       }
+
+      // Query ALL historical paper questions across all uploaded past papers in this workspace
+      const { data: allPaperRows } = await admin
+        .from("paper_questions")
+        .select("*")
+        .eq("workspace_id", workspaceId);
+
+      // Recompute normalized weights across all past papers
+      examWeightsMap = computeTopicExamWeights(topics, (allPaperRows as any[]) || simulatedPaperRows);
 
       // Update topic exam weights
       for (const [topicId, weightUpdate] of examWeightsMap.entries()) {

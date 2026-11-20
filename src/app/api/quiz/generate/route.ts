@@ -16,13 +16,14 @@ import {
 } from "@/lib/algorithms/question-generator";
 import type { SafeQuizQuestion } from "@/types/assessment";
 import { DEMO_TOPICS, DEMO_CHUNKS, DEMO_QUIZ_QUESTIONS } from "@/lib/demo/os-cs301-fixture";
+import { storeDemoQuiz } from "@/lib/demo/demo-quiz-cache";
 
 const GenerateQuizRequestSchema = z.object({
   workspaceId: z.string().uuid("Invalid workspace ID"),
   topicIds: z.array(z.string()).optional(),
   targetCount: z.number().int().min(1).max(20).default(6),
   difficulty: z.number().int().min(1).max(3).default(2),
-  quizMode: z.enum(["diagnostic", "drill", "retest"]).default("diagnostic"),
+  quizMode: z.enum(["diagnostic", "drill", "retest", "exam"]).default("diagnostic"),
 });
 
 export async function POST(request: Request) {
@@ -220,10 +221,31 @@ export async function POST(request: Request) {
         }
       }
     } else {
-      // Assign valid UUIDs in mock mode
+      // Assign valid UUIDs in mock mode and cache questions server-side
       generated.forEach((q) => {
         q.id = q.id || crypto.randomUUID();
       });
+      const cachedQuestions = generated.map((q) => ({
+        id: q.id,
+        quiz_id: quizId,
+        topic_id: q.topicId,
+        question_type: q.questionType,
+        difficulty: q.difficulty,
+        question_text: q.questionText,
+        options: q.options || null,
+        answer_key: q.answerKey,
+        explanation: q.explanation || "Evaluated according to course syllabus rubric.",
+        rubric: q.rubric || null,
+        source_chunk_id: q.sourceChunkId || null,
+        citation_document_name: q.citationDocumentName || null,
+        citation_page_start: q.citationPageStart || null,
+        citation_page_end: q.citationPageEnd || null,
+        citation_section: q.citationSection || null,
+        citation_quote: q.citationQuote || null,
+        is_quote_verified: q.isQuoteVerified || false,
+        created_at: new Date().toISOString(),
+      }));
+      storeDemoQuiz(quizId, cachedQuestions as any);
     }
 
     // Strip answer keys and rubrics for client runner
@@ -236,6 +258,7 @@ export async function POST(request: Request) {
       success: true,
       quizId,
       workspaceId,
+      quizMode,
       totalQuestions: safeQuestions.length,
       questions: safeQuestions,
     });

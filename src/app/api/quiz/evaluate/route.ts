@@ -21,6 +21,7 @@ import {
   DEMO_TOPICS,
   DEMO_ANSWERS,
 } from "@/lib/demo/os-cs301-fixture";
+import { getDemoQuizQuestions } from "@/lib/demo/demo-quiz-cache";
 
 const AnswerSubmissionSchema = z.object({
   questionId: z.string(),
@@ -29,9 +30,6 @@ const AnswerSubmissionSchema = z.object({
   questionText: z.string().optional(),
   questionType: z.enum(["mcq", "short_answer"]).optional(),
   options: z.any().optional(),
-  answerKey: z.string().optional(),
-  explanation: z.string().optional(),
-  rubric: z.any().optional(),
   topicId: z.string().optional(),
 });
 
@@ -201,7 +199,7 @@ export async function POST(request: Request) {
         }
       }
     } else {
-      // Offline mode: demo quiz only accepts fixture questions; dynamic preview quizzes accept generated questions
+      // Offline mode: demo quiz accepts fixture questions or cached dynamically-generated questions
       if (quizId === DEMO_QUIZ_QUESTIONS[0].quiz_id) {
         questions = DEMO_QUIZ_QUESTIONS.filter((q) => submittedIds.includes(q.id));
         if (questions.length !== submittedIds.length) {
@@ -215,37 +213,28 @@ export async function POST(request: Request) {
           );
         }
       } else {
-        const demoMap = new Map(DEMO_QUIZ_QUESTIONS.map((q) => [q.id, q]));
-        questions = answers.map((a) => {
-          const found = demoMap.get(a.questionId);
-          if (found) return found;
-
-          return {
-            id: a.questionId,
-            quiz_id: quizId,
-            topic_id: a.topicId || (DEMO_TOPICS[0]?.id ?? "40000000-0000-0000-0000-000000000001"),
-            question_type: a.questionType || (a.options ? "mcq" : "short_answer"),
-            difficulty: 2,
-            question_text: a.questionText || "Conceptual assessment question",
-            options: a.options || null,
-            answer_key: a.answerKey || a.response,
-            explanation: a.explanation || "Evaluated according to course syllabus rubric.",
-            rubric: a.rubric || {
-              keypoints: [
-                { point: "Addresses primary concept", weight: 0.6 },
-                { point: "Provides accurate reasoning", weight: 0.4 },
-              ],
+        const cached = getDemoQuizQuestions(quizId);
+        if (cached && cached.length > 0) {
+          questions = cached.filter((q) => submittedIds.includes(q.id));
+          if (questions.length !== submittedIds.length) {
+            const missing = submittedIds.filter((id) => !questions.some((q) => q.id === id));
+            return NextResponse.json(
+              {
+                error: `Submitted question IDs not found in generated quiz session: ${missing.join(", ")}`,
+                isDemo: true,
+              },
+              { status: 400 }
+            );
+          }
+        } else {
+          return NextResponse.json(
+            {
+              error: `Invalid or expired quiz session (${quizId}). Please generate or start a fresh diagnostic quiz.`,
+              isDemo: true,
             },
-            source_chunk_id: null,
-            citation_document_name: null,
-            citation_page_start: null,
-            citation_page_end: null,
-            citation_section: null,
-            citation_quote: null,
-            is_quote_verified: false,
-            created_at: new Date().toISOString(),
-          } as unknown as QuizQuestionRow;
-        });
+            { status: 400 }
+          );
+        }
       }
 
       for (const t of DEMO_TOPICS) {
@@ -311,7 +300,12 @@ export async function POST(request: Request) {
       }
 
       const blindSpotsThisAttempt = new Map<string, number>();
+      const attemptCountsThisAttempt = new Map<string, number>();
       for (const ans of evalResult.answers) {
+        attemptCountsThisAttempt.set(
+          ans.topicId,
+          (attemptCountsThisAttempt.get(ans.topicId) || 0) + 1
+        );
         if (ans.isBlindSpot) {
           blindSpotsThisAttempt.set(
             ans.topicId,
@@ -424,7 +418,8 @@ export async function POST(request: Request) {
           examWeight: t.exam_weight ?? 0.0,
           blindSpotCount:
             (t.blind_spot_count ?? 0) + (blindSpotsThisAttempt.get(t.id) || 0),
-          totalAttempts: t.total_attempts ?? 0,
+          totalAttempts:
+            evalResult.masteryDeltas[t.id]?.totalAttempts ?? ((t.total_attempts ?? 0) + (attemptCountsThisAttempt.get(t.id) || 0)),
           downstreamDependentsCount: dependentCounts.get(t.id) || 0,
           totalTopicsCount: topics.length,
         }));
