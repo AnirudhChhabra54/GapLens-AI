@@ -402,7 +402,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <input
                   type="number"
                   min={15}
-                  max={480}
+                  max={1440}
                   step={15}
                   value={settingsMinutes}
                   onChange={(e) => setSettingsMinutes(Number(e.target.value))}

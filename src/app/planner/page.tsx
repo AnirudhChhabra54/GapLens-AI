@@ -8,7 +8,7 @@
 // Realistic knapsack time budgeting, relative day timeline, and grounded task execution.
 // ==============================================================================
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   CalendarCheck2,
@@ -37,6 +37,14 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   spaced_review: "Spaced Review",
 };
 
+function formatStudyDuration(minutes: number): string {
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMins = minutes % 60;
+  if (remainingMins === 0) return `${hours} hr${hours > 1 ? "s" : ""}`;
+  return `${hours}h ${remainingMins}m`;
+}
+
 export default function PlannerPage() {
   const {
     workspace,
@@ -53,6 +61,11 @@ export default function PlannerPage() {
   } = useWorkspace();
 
   const [copilotOpen, setCopilotOpen] = useState(false);
+  const [customMinutesInput, setCustomMinutesInput] = useState<string>(String(dailyMinutes));
+
+  useEffect(() => {
+    setCustomMinutesInput(String(dailyMinutes));
+  }, [dailyMinutes]);
   const [activeTopicTitle, setActiveTopicTitle] = useState(
     gapReport.blindSpots.highRiskTopics[0]?.topicTitle ||
       topics.find((t) => t.classification === "weak")?.title ||
@@ -139,7 +152,9 @@ export default function PlannerPage() {
           </span>
           <div className="mt-1.5 flex items-baseline gap-1.5">
             <span className="text-2xl font-semibold font-mono text-accent">{dailyMinutes}</span>
-            <span className="text-xs text-brandText-secondary font-mono">mins / day</span>
+            <span className="text-xs text-brandText-secondary font-mono">
+              mins ({formatStudyDuration(dailyMinutes)}) / day
+            </span>
           </div>
         </Card>
 
@@ -151,7 +166,9 @@ export default function PlannerPage() {
             <span className="text-2xl font-semibold font-mono text-brandText-primary">
               {plan.totalAllocatedMinutes}
             </span>
-            <span className="text-xs text-brandText-muted font-mono">/ {plan.totalAvailableMinutes} mins</span>
+            <span className="text-xs text-brandText-muted font-mono">
+              / {plan.totalAvailableMinutes} mins ({formatStudyDuration(plan.totalAllocatedMinutes)})
+            </span>
           </div>
         </Card>
 
@@ -197,7 +214,7 @@ export default function PlannerPage() {
               </h3>
             </div>
             <span className="font-mono text-xs font-semibold px-2.5 py-1 rounded bg-accent-soft text-accent">
-              {dailyMinutes} mins per day
+              {dailyMinutes} mins ({formatStudyDuration(dailyMinutes)}) per day
             </span>
           </div>
 
@@ -205,7 +222,7 @@ export default function PlannerPage() {
             <input
               type="range"
               min={15}
-              max={120}
+              max={1440}
               step={15}
               value={dailyMinutes}
               onChange={(e) => onBudgetChange(Number(e.target.value))}
@@ -214,31 +231,88 @@ export default function PlannerPage() {
             />
             <div className="flex justify-between text-[11px] font-mono text-brandText-muted">
               <span>15m</span>
-              <span>30m</span>
-              <span>45m</span>
-              <span>60m</span>
-              <span>90m</span>
-              <span>120m</span>
+              <span>1h</span>
+              <span>2h</span>
+              <span>4h</span>
+              <span>8h</span>
+              <span>12h</span>
+              <span>16h</span>
+              <span>24h</span>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <span className="text-xs text-brandText-muted mr-1 font-mono">Quick presets:</span>
-            {[30, 45, 60, 90].map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                onClick={() => onBudgetChange(preset)}
-                className={cn(
-                  "px-3 py-1 rounded-control text-xs font-mono transition-colors",
-                  dailyMinutes === preset
-                    ? "bg-accent text-white font-medium shadow-xs"
-                    : "bg-surface-subtle text-brandText-secondary border border-brandBorder hover:border-brandBorder-strong"
-                )}
-              >
-                {preset} min
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-brandText-muted mr-1 font-mono">Quick presets:</span>
+              {[
+                { label: "30 min", value: 30 },
+                { label: "1 hr", value: 60 },
+                { label: "2 hrs", value: 120 },
+                { label: "4 hrs", value: 240 },
+                { label: "8 hrs", value: 480 },
+                { label: "12 hrs", value: 720 },
+                { label: "24 hrs", value: 1440 },
+              ].map((preset) => (
+                <button
+                  key={preset.value}
+                  type="button"
+                  onClick={() => onBudgetChange(preset.value)}
+                  className={cn(
+                    "px-2.5 py-1 rounded-control text-xs font-mono transition-colors",
+                    dailyMinutes === preset.value
+                      ? "bg-accent text-white font-medium shadow-xs"
+                      : "bg-surface-subtle text-brandText-secondary border border-brandBorder hover:border-brandBorder-strong"
+                  )}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label htmlFor="custom-study-minutes" className="text-xs font-mono text-brandText-muted">
+                Custom time:
+              </label>
+              <div className="flex items-center gap-1.5">
+                <input
+                  id="custom-study-minutes"
+                  type="number"
+                  min={15}
+                  max={1440}
+                  step={5}
+                  value={customMinutesInput}
+                  onChange={(e) => {
+                    const str = e.target.value;
+                    setCustomMinutesInput(str);
+                    const val = Number(str);
+                    if (val >= 15 && val <= 1440) {
+                      onBudgetChange(val);
+                    }
+                  }}
+                  onBlur={() => {
+                    const val = Number(customMinutesInput);
+                    const clamped = Math.max(15, Math.min(1440, isNaN(val) || val <= 0 ? 60 : val));
+                    setCustomMinutesInput(String(clamped));
+                    if (clamped !== dailyMinutes) {
+                      onBudgetChange(clamped);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const val = Number(customMinutesInput);
+                      const clamped = Math.max(15, Math.min(1440, isNaN(val) || val <= 0 ? 60 : val));
+                      setCustomMinutesInput(String(clamped));
+                      if (clamped !== dailyMinutes) {
+                        onBudgetChange(clamped);
+                      }
+                    }
+                  }}
+                  className="w-20 px-2 py-1 text-xs font-mono rounded-control border border-brandBorder bg-surface text-brandText-primary focus:border-accent focus:outline-none transition-colors"
+                  aria-label="Custom daily study budget in minutes"
+                />
+                <span className="text-xs font-mono text-brandText-secondary">mins</span>
+              </div>
+            </div>
           </div>
 
           <p className="text-xs text-brandText-muted pt-1">

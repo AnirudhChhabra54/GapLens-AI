@@ -298,5 +298,22 @@ describe("Unit: Revision Planner & Scheduler Engine (scheduler.ts)", () => {
       expect(tightPlan.days[0].tasks[0].topicId).toBe("t-small");
       expect(tightPlan.deferredTasksCount).toBeGreaterThan(0);
     });
+
+    it("should support large daily study budgets up to 24 hours (1440 minutes)", () => {
+      const largeBudgetPlan = generateRevisionPlan({
+        workspaceId: "ws-test",
+        prioritizedTopics: mockTopics,
+        dailyMinutes: 1440, // 24 hours
+        daysRemaining: 3,
+      });
+
+      expect(largeBudgetPlan.dailyMinutes).toBe(1440);
+      expect(largeBudgetPlan.totalAvailableMinutes).toBe(1440 * 3);
+      expect(largeBudgetPlan.deferredTasksCount).toBe(0);
+      for (const day of largeBudgetPlan.days) {
+        expect(day.availableMinutes).toBe(1440);
+        expect(day.allocatedMinutes).toBeLessThanOrEqual(1440);
+      }
+    });
   });
 });

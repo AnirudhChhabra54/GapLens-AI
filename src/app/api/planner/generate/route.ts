@@ -16,7 +16,7 @@ import { DEMO_TOPICS, DEMO_PREREQUISITES, DEMO_REVISION_TASKS } from "@/lib/demo
 
 const GeneratePlanRequestSchema = z.object({
   workspaceId: z.string().uuid("Invalid workspace ID"),
-  dailyMinutes: z.number().int().min(10).max(480).default(60),
+  dailyMinutes: z.number().int().min(10).max(1440).default(60),
   daysRemaining: z.number().int().min(1).max(365).default(7),
   examDate: z.string().nullable().optional(),
 });

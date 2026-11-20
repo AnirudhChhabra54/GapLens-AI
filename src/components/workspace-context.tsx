@@ -496,7 +496,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const setDailyMinutes = (mins: number) => {
-    const clamped = Math.max(15, Math.min(180, mins));
+    const clamped = Math.max(15, Math.min(1440, mins));
     setDailyMinutesState(clamped);
     saveState({ dailyMinutes: clamped });
   };
@@ -605,7 +605,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   });
 
   const regenerateSchedule = (minutes: number): RevisionPlanOverview => {
-    const nextMinutes = Math.max(15, Math.min(180, minutes));
+    const nextMinutes = Math.max(15, Math.min(1440, minutes));
     const nextPlan = generateRevisionPlan({
       planId: revisionSchedule.id,
       workspaceId: revisionSchedule.workspaceId,

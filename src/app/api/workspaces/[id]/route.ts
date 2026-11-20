@@ -15,8 +15,8 @@ const PatchWorkspaceSchema = z.object({
   description: z.string().nullable().optional(),
   examDate: z.string().nullable().optional(),
   exam_date: z.string().nullable().optional(),
-  dailyStudyMinutes: z.number().int().min(15).max(180).optional(),
-  daily_study_minutes: z.number().int().min(15).max(180).optional(),
+  dailyStudyMinutes: z.number().int().min(15).max(1440).optional(),
+  daily_study_minutes: z.number().int().min(15).max(1440).optional(),
 });
 
 export async function PATCH(
