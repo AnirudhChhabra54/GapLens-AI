@@ -10,6 +10,7 @@ import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admi
 import { extractTopicHierarchy } from "@/lib/algorithms/topic-mapper";
 import { DEMO_CHUNKS } from "@/lib/demo/os-cs301-fixture";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { isMissingSchemaError } from "@/lib/supabase/errors";
 
 const ExtractTopicsRequestSchema = z.object({
   workspaceId: z.string().uuid("Invalid workspace ID"),
@@ -41,6 +42,7 @@ export async function POST(request: Request) {
 
     let chunks: any[] = [];
     let textToParse = syllabusText || "";
+    let isSchemaMissing = false;
 
     if (isLiveDb) {
       let query = admin
@@ -54,10 +56,14 @@ export async function POST(request: Request) {
 
       const { data, error } = await query;
       if (error) {
-        return NextResponse.json(
-          { error: "Failed to load syllabus chunks", details: error.message },
-          { status: 500 }
-        );
+        if (isMissingSchemaError(error)) {
+          isSchemaMissing = true;
+        } else {
+          return NextResponse.json(
+            { error: "Failed to load syllabus chunks", details: error.message },
+            { status: 500 }
+          );
+        }
       }
 
       chunks = data || [];
@@ -101,17 +107,21 @@ export async function POST(request: Request) {
     const topicKey = (title: string, unitModule: string | null) =>
       `${(unitModule || "").trim().toLowerCase()}::${title.trim().toLowerCase()}`;
 
-    if (isLiveDb) {
+    if (isLiveDb && !isSchemaMissing) {
       const { data: existingTopics, error: existingTopicsError } = await admin
         .from("topics")
         .select("*")
         .eq("workspace_id", workspaceId);
 
       if (existingTopicsError) {
-        return NextResponse.json(
-          { error: "Failed to load existing topics", details: existingTopicsError.message },
-          { status: 500 }
-        );
+        if (isMissingSchemaError(existingTopicsError)) {
+          isSchemaMissing = true;
+        } else {
+          return NextResponse.json(
+            { error: "Failed to load existing topics", details: existingTopicsError.message },
+            { status: 500 }
+          );
+        }
       }
 
       for (const existing of existingTopics || []) {
@@ -235,7 +245,9 @@ export async function POST(request: Request) {
 
         if (prereqRow) insertedPrerequisites.push(prereqRow);
       }
-    } else {
+    }
+    
+    if (!isLiveDb || isSchemaMissing) {
       const demoIdByKey = new Map<string, string>();
 
       // In mock/demo mode, create unit topics and link parent_id

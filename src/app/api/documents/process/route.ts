@@ -31,6 +31,7 @@ const ProcessDocumentRequestSchema = z.object({
   workspaceId: z.string().uuid("Invalid workspace ID").optional(),
   filename: z.string().optional(),
   fileBase64: z.string().optional(),
+  storagePath: z.string().optional(),
   docType: z.enum(["syllabus", "material", "past_paper"]).optional(),
   indexVersion: z.number().int().min(1).default(1),
   maxChunks: z.number().int().positive().optional(),
@@ -54,6 +55,7 @@ export async function POST(request: Request) {
       workspaceId: clientWorkspaceId,
       filename: clientFilename,
       fileBase64,
+      storagePath: clientStoragePath,
       docType: clientDocType,
       indexVersion,
       maxChunks,
@@ -66,7 +68,7 @@ export async function POST(request: Request) {
     let filename = clientFilename || "uploaded_document.pdf";
     let workspaceId = clientWorkspaceId || "10000000-0000-0000-0000-000000000001";
     let userId = "00000000-0000-0000-0000-000000000001";
-    let storagePath: string | null = null;
+    let storagePath: string | null = clientStoragePath || null;
     let docType: DocumentType = clientDocType || "material";
 
     // Step 0: Check document metadata if DB is configured
@@ -75,7 +77,7 @@ export async function POST(request: Request) {
         .from("documents")
         .select("*")
         .eq("id", documentId)
-        .single();
+        .maybeSingle();
 
       if (doc) {
         filename = doc.filename || filename;
@@ -83,8 +85,8 @@ export async function POST(request: Request) {
         userId = doc.user_id || userId;
         storagePath = doc.storage_path || storagePath;
         docType = (doc.doc_type as DocumentType) || docType;
-      } else if (fetchErr && !fileBase64 && !ocrText?.trim()) {
-        // Document not found and no recoverable payload (uploaded file or OCR text).
+      } else if (fetchErr && !fileBase64 && !ocrText?.trim() && !storagePath) {
+        // Document not found and no recoverable payload (uploaded file, OCR text, or storage path).
         if (isMissingSchemaError(fetchErr)) {
           return NextResponse.json(schemaMissingPayload(), { status: 503 });
         }
@@ -358,6 +360,7 @@ export async function POST(request: Request) {
               chunkCount: rawChunks.length,
               pageCount: parseResult.pageCount,
               extractedCharCount: parseResult.extractedCharCount,
+              extractedText: parseResult.pages.map((p) => p.text).join("\n\n"),
               isOffline: true,
               warning: SCHEMA_MISSING_MESSAGE,
             });
@@ -390,6 +393,7 @@ export async function POST(request: Request) {
       pageCount: parseResult.pageCount,
       extractedCharCount: parseResult.extractedCharCount,
       chunkCount: rawChunks.length,
+      extractedText: parseResult.pages.map((p) => p.text).join("\n\n"),
       chunks: rawChunks.map((c, i) => ({
         chunkIndex: c.chunkIndex,
         pageStart: c.pageStart,

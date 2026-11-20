@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { isMissingSchemaError } from "@/lib/supabase/errors";
 import { buildTopicTree } from "@/lib/algorithms/topic-mapper";
 import { DEMO_TOPICS, DEMO_PREREQUISITES } from "@/lib/demo/os-cs301-fixture";
 
@@ -41,6 +42,14 @@ export async function GET(request: Request) {
         .order("order_index", { ascending: true });
 
       if (topicErr) {
+        if (isMissingSchemaError(topicErr)) {
+          return NextResponse.json({
+            success: true,
+            tree: [],
+            totalTopics: 0,
+            isOffline: true,
+          });
+        }
         return NextResponse.json(
           { error: "Failed to load workspace topics", details: topicErr.message },
           { status: 500 }
@@ -52,7 +61,7 @@ export async function GET(request: Request) {
         .select("*")
         .eq("workspace_id", workspaceId);
 
-      if (prereqErr) {
+      if (prereqErr && !isMissingSchemaError(prereqErr)) {
         return NextResponse.json(
           { error: "Failed to load topic prerequisites", details: prereqErr.message },
           { status: 500 }

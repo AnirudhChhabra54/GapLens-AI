@@ -173,22 +173,24 @@ export default function MaterialsPage() {
       }
 
       let base64Data: string | undefined = undefined;
-      if (!uploadedDirectly) {
-        if (!isDemo && file.size > SAFE_BASE64_FALLBACK_BYTES) {
-          throw new Error(
-            "The direct storage upload did not complete. This file is too large for the inline fallback, so please check your connection and try again."
-          );
+      // Read base64 payload when inline fallback is safe (<4MB) or when direct storage upload did not succeed
+      if (!uploadedDirectly || file.size <= SAFE_BASE64_FALLBACK_BYTES) {
+        try {
+          base64Data = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const result = reader.result as string;
+              const base64 = result.includes(",") ? result.split(",")[1] : result;
+              resolve(base64);
+            };
+            reader.onerror = () => reject(new Error("Failed to read local file contents."));
+            reader.readAsDataURL(file);
+          });
+        } catch {
+          if (!uploadedDirectly) {
+            throw new Error("Failed to read local file contents.");
+          }
         }
-        base64Data = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const result = reader.result as string;
-            const base64 = result.includes(",") ? result.split(",")[1] : result;
-            resolve(base64);
-          };
-          reader.onerror = () => reject(new Error("Failed to read local file contents."));
-          reader.readAsDataURL(file);
-        });
       }
 
       setUploadProgress(60);
@@ -202,6 +204,7 @@ export default function MaterialsPage() {
           documentId: signData.documentId,
           workspaceId: workspace?.id,
           filename: file.name,
+          storagePath: signData.storagePath,
           docType,
           fileBase64: base64Data,
           indexVersion: 1,
@@ -275,6 +278,7 @@ export default function MaterialsPage() {
           index_version: 1,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
+          ...({ extracted_text: processData.extractedText } as any),
         };
         setDocuments((prev) => {
           const nextDocs = [newDoc, ...prev];
@@ -295,12 +299,14 @@ export default function MaterialsPage() {
     setActionSuccess(null);
     setUploadError(null);
     try {
+      const targetDoc = documents.find((d) => d.id === docId);
       const res = await fetch("/api/topics/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           workspaceId: workspace?.id || "10000000-0000-0000-0000-000000000001",
           documentId: docId,
+          syllabusText: (targetDoc as any)?.extracted_text || undefined,
         }),
       });
       const data = await res.json();
