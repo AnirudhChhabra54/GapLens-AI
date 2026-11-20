@@ -8,6 +8,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import {
+  isMissingSchemaError,
+  schemaMissingPayload,
+  SCHEMA_MISSING_MESSAGE,
+} from "@/lib/supabase/errors";
 
 const ProvisionRequestSchema = z.object({
   fullName: z.string().optional(),
@@ -53,6 +58,25 @@ export async function POST(request: Request) {
     const resolvedName = fullName || user.user_metadata?.full_name || user.email?.split("@")[0] || "Student";
     const resolvedEmail = user.email || `${user.id}@student.gaplens.local`;
 
+    const fallbackProfile = {
+      id: user.id,
+      email: resolvedEmail,
+      full_name: resolvedName,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const fallbackWorkspace = {
+      id: crypto.randomUUID(),
+      user_id: user.id,
+      title: "My Course Workspace",
+      description: "Active course workspace for syllabus mapping, diagnostic assessments, and study planning.",
+      daily_study_minutes: 60,
+      exam_date: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
     // 1. Upsert Profile
     const { data: profile, error: profileError } = await admin
       .from("profiles")
@@ -69,6 +93,18 @@ export async function POST(request: Request) {
       .single();
 
     if (profileError || !profile) {
+      if (isMissingSchemaError(profileError)) {
+        return NextResponse.json({
+          success: true,
+          profile: fallbackProfile,
+          workspace: fallbackWorkspace,
+          documents: [],
+          topics: [],
+          prerequisites: [],
+          isUnmigrated: true,
+          warning: SCHEMA_MISSING_MESSAGE,
+        });
+      }
       return NextResponse.json(
         { error: "Failed to provision user profile", details: profileError?.message },
         { status: 500 }
@@ -86,6 +122,18 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (fetchWsError) {
+      if (isMissingSchemaError(fetchWsError)) {
+        return NextResponse.json({
+          success: true,
+          profile: profile || fallbackProfile,
+          workspace: fallbackWorkspace,
+          documents: [],
+          topics: [],
+          prerequisites: [],
+          isUnmigrated: true,
+          warning: SCHEMA_MISSING_MESSAGE,
+        });
+      }
       return NextResponse.json(
         { error: "Failed to query workspace", details: fetchWsError.message },
         { status: 500 }
@@ -108,6 +156,18 @@ export async function POST(request: Request) {
         .single();
 
       if (createWsError || !createdWorkspace) {
+        if (isMissingSchemaError(createWsError)) {
+          return NextResponse.json({
+            success: true,
+            profile: profile || fallbackProfile,
+            workspace: fallbackWorkspace,
+            documents: [],
+            topics: [],
+            prerequisites: [],
+            isUnmigrated: true,
+            warning: SCHEMA_MISSING_MESSAGE,
+          });
+        }
         return NextResponse.json(
           { error: "Failed to create default workspace", details: createWsError?.message },
           { status: 500 }

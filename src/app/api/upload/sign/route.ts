@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { isMissingSchemaError, schemaMissingPayload } from "@/lib/supabase/errors";
 import type { DocumentType, DocumentStatus } from "@/types/database";
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50MB
@@ -100,6 +101,9 @@ export async function POST(request: Request) {
 
       if (docError) {
         console.error("[Upload Sign] DB insert error:", docError);
+        if (isMissingSchemaError(docError)) {
+          return NextResponse.json(schemaMissingPayload(), { status: 503 });
+        }
         return NextResponse.json(
           { error: "Failed to initialize document record in database", details: docError.message },
           { status: 500 }

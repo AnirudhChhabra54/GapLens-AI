@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { isMissingSchemaError, schemaMissingPayload } from "@/lib/supabase/errors";
 import { parsePdfBuffer } from "@/lib/rag/pdf-parser";
 import { chunkExtractedPages } from "@/lib/rag/chunker";
 import {
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
       docType: clientDocType,
       indexVersion,
       maxChunks,
+      ocrText,
     } = parsed.data;
 
     const isLiveDb = isSupabaseAdminConfigured();
@@ -77,8 +79,11 @@ export async function POST(request: Request) {
         userId = doc.user_id || userId;
         storagePath = doc.storage_path || storagePath;
         docType = (doc.doc_type as DocumentType) || docType;
-      } else if (fetchErr && !fileBase64) {
-        // Document not found and no base64 payload provided
+      } else if (fetchErr && !fileBase64 && !ocrText?.trim()) {
+        // Document not found and no recoverable payload (uploaded file or OCR text).
+        if (isMissingSchemaError(fetchErr)) {
+          return NextResponse.json(schemaMissingPayload(), { status: 503 });
+        }
         return NextResponse.json(
           { error: `Document '${documentId}' not found in database.` },
           { status: 404 }
@@ -137,10 +142,12 @@ export async function POST(request: Request) {
       }
     }
 
-    // Step 2: Fetch and validate file buffer
-    // For live persisted documents with a valid storage path, storage is authoritative.
+    // Step 2: Fetch and validate file buffer.
+    // When the caller supplies OCR/transcribed text we do not need the binary at all.
     let pdfBuffer: Buffer;
-    if (persistToDb && storagePath) {
+    if (ocrText && ocrText.trim().length > 0) {
+      pdfBuffer = Buffer.from(ocrText, "utf-8");
+    } else if (persistToDb && storagePath) {
       const { data: fileData, error: downloadErr } = await admin.storage
         .from("documents")
         .download(storagePath);
@@ -191,7 +198,6 @@ export async function POST(request: Request) {
     }
 
     // Step 3: Run Text Extraction (OCR-resolved text, PDF or plain text/Markdown)
-    const { ocrText } = parsed.data;
     const lowerFilename = filename.toLowerCase();
     const isTextFile =
       lowerFilename.endsWith(".txt") ||

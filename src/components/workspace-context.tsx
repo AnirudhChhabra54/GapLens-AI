@@ -33,6 +33,18 @@ import { generateRevisionPlan, updatePlanAfterRetest } from "@/lib/algorithms/sc
 import { mergeAssessmentIntoGapReport } from "@/lib/algorithms/gap-report-update";
 import { supabase } from "@/lib/supabase/client";
 
+async function parseJsonResponse(res: Response): Promise<any> {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      error: `Unexpected server response (${res.status}). Please try again.`,
+    };
+  }
+}
+
 interface WorkspaceContextType {
   profile: ProfileRow;
   workspace: WorkspaceRow;
@@ -426,7 +438,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ fullName: name || email.split("@")[0] }),
     });
 
-    const provisionData = await res.json();
+    const provisionData = await parseJsonResponse(res);
     if (!res.ok || !provisionData.success) {
       throw new Error(provisionData.error || "Failed to provision workspace");
     }

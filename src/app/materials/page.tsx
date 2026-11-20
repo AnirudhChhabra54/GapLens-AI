@@ -32,6 +32,23 @@ import { DEMO_DOCUMENTS, DEMO_PREREQUISITES } from "@/lib/demo/os-cs301-fixture"
 import type { DocumentRow } from "@/types/database";
 import { Card, PageHeader, StatusBadge, Button } from "@/components/ui/design-system";
 
+const SAFE_BASE64_FALLBACK_BYTES = 4 * 1024 * 1024;
+
+async function readJsonResponse(res: Response): Promise<any> {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      error:
+        res.status === 413
+          ? "The document is too large to process. Please upload a smaller file or try again."
+          : `Unexpected server response (${res.status}). Please retry.`,
+    };
+  }
+}
+
 export default function MaterialsPage() {
   const {
     workspace,
@@ -130,7 +147,7 @@ export default function MaterialsPage() {
         }),
       });
 
-      const signData = await signRes.json();
+      const signData = await readJsonResponse(signRes);
       if (!signRes.ok || !signData.success) {
         throw new Error(signData.error || "Storage upload authorization failed.");
       }
@@ -157,6 +174,11 @@ export default function MaterialsPage() {
 
       let base64Data: string | undefined = undefined;
       if (!uploadedDirectly) {
+        if (!isDemo && file.size > SAFE_BASE64_FALLBACK_BYTES) {
+          throw new Error(
+            "The direct storage upload did not complete. This file is too large for the inline fallback, so please check your connection and try again."
+          );
+        }
         base64Data = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => {
@@ -186,7 +208,7 @@ export default function MaterialsPage() {
         }),
       });
 
-      const processData = await processRes.json();
+      const processData = await readJsonResponse(processRes);
 
       if (processData.status === "needs_ocr") {
         setUploadProgress(100);
@@ -214,7 +236,11 @@ export default function MaterialsPage() {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
-        setDocuments((prev) => [ocrDoc, ...prev]);
+        setDocuments((prev) => {
+          const nextDocs = [ocrDoc, ...prev.filter((d) => d.id !== ocrDoc.id)];
+          setWorkspaceDocuments(nextDocs);
+          return nextDocs;
+        });
         return;
       }
 
@@ -384,7 +410,11 @@ export default function MaterialsPage() {
               updated_at: new Date().toISOString(),
             };
 
-            setDocuments((prev) => [newDoc, ...prev]);
+            setDocuments((prev) => {
+              const nextDocs = [newDoc, ...prev];
+              setWorkspaceDocuments(nextDocs);
+              return nextDocs;
+            });
           }, 500);
         }, 500);
       }, 500);
@@ -398,7 +428,7 @@ export default function MaterialsPage() {
           method: "DELETE",
         });
         if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
+          const data = await readJsonResponse(res);
           setUploadError(data.error || "Failed to delete document from database.");
           return;
         }
@@ -407,7 +437,9 @@ export default function MaterialsPage() {
         return;
       }
     }
-    setDocuments((prev) => prev.filter((d) => d.id !== id));
+    const nextDocs = documents.filter((d) => d.id !== id);
+    setDocuments(nextDocs);
+    setWorkspaceDocuments(nextDocs);
     setActionSuccess("Document removed.");
   };
 
@@ -419,24 +451,24 @@ export default function MaterialsPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ workspaceId: workspace.id }),
         });
-        const data = await res.json();
+        const data = await readJsonResponse(res);
         if (!res.ok || !data.success) {
           setUploadError(data.error || "Failed to reindex document.");
           return;
         }
-        setDocuments((prev) =>
-          prev.map((d) =>
-            d.id === id
-              ? {
-                  ...d,
-                  status: "indexed",
-                  index_version: (data.indexVersion as number) ?? d.index_version + 1,
-                  chunk_count: data.chunkCount ?? d.chunk_count,
-                  updated_at: new Date().toISOString(),
-                }
-              : d
-          )
+        const nextDocs = documents.map((d) =>
+          d.id === id
+            ? {
+                ...d,
+                status: "indexed" as const,
+                index_version: (data.indexVersion as number) ?? d.index_version + 1,
+                chunk_count: data.chunkCount ?? d.chunk_count,
+                updated_at: new Date().toISOString(),
+              }
+            : d
         );
+        setDocuments(nextDocs);
+        setWorkspaceDocuments(nextDocs);
         setActionSuccess("Document re-indexed successfully.");
         return;
       } catch (err: any) {
@@ -444,9 +476,11 @@ export default function MaterialsPage() {
         return;
       }
     }
-    setDocuments((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, status: "indexed", updated_at: new Date().toISOString() } : d))
+    const nextDocs = documents.map((d) =>
+      d.id === id ? { ...d, status: "indexed" as const, updated_at: new Date().toISOString() } : d
     );
+    setDocuments(nextDocs);
+    setWorkspaceDocuments(nextDocs);
     setActionSuccess("Document re-indexed.");
   };
 
@@ -465,23 +499,25 @@ export default function MaterialsPage() {
           ocrText: ocrInputText.trim(),
         }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || "Failed to process OCR text.");
       }
-      setDocuments((prev) =>
-        prev.map((d) =>
-          d.id === ocrTargetDoc.id
-            ? {
-                ...d,
-                status: "indexed",
-                chunk_count: data.chunkCount || d.chunk_count,
-                extracted_char_count: ocrInputText.trim().length,
-                updated_at: new Date().toISOString(),
-              }
-            : d
-        )
+      const nextDocs = documents.map((d) =>
+        d.id === ocrTargetDoc.id
+          ? {
+              ...d,
+              status: "indexed" as const,
+              chunk_count: data.chunkCount || d.chunk_count,
+              extracted_char_count: ocrInputText.trim().length,
+              page_count: data.pageCount || d.page_count,
+              error_message: null,
+              updated_at: new Date().toISOString(),
+            }
+          : d
       );
+      setDocuments(nextDocs);
+      setWorkspaceDocuments(nextDocs);
       setStateMachineStage("indexed");
       setActionSuccess(`OCR text resolved. Document indexed with ${data.chunkCount || 0} chunks.`);
       setOcrModalOpen(false);

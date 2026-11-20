@@ -173,6 +173,8 @@ export async function POST(
     // 7. Clear old chunks and insert newly processed chunks
     await admin.from("document_chunks").delete().eq("document_id", documentId);
 
+    const nextIndexVersion = (document.index_version || 1) + 1;
+
     const chunkRows = chunks.map((c, idx) => {
       const emb = embeddingResults[idx] || {
         embedding: generateDeterministic768dEmbedding(c.content),
@@ -184,7 +186,8 @@ export async function POST(
         document_id: documentId,
         workspace_id: workspaceId,
         user_id: document.user_id || "00000000-0000-0000-0000-000000000001",
-        chunk_index: idx + 1,
+        chunk_index: c.chunkIndex,
+        index_version: nextIndexVersion,
         page_start: c.pageStart,
         page_end: c.pageEnd,
         section_heading: c.sectionHeading || null,
@@ -192,16 +195,49 @@ export async function POST(
         token_count: c.tokenCount,
         char_count: c.content.length,
         embedding: emb.embedding as unknown as string,
+        embedding_model: emb.model,
+        embedding_dimensions: emb.dimensions,
         created_at: new Date().toISOString(),
       };
     });
 
-    if (chunkRows.length > 0) {
-      await admin.from("document_chunks").insert(chunkRows as any);
+    if (chunkRows.length === 0) {
+      await admin
+        .from("documents")
+        .update({
+          status: "failed",
+          error_message: "Reindex produced no chunks from the extracted text.",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", documentId);
+
+      return NextResponse.json(
+        { error: "Reindex failed: no text chunks were produced from this document." },
+        { status: 422 }
+      );
+    }
+
+    const { error: chunkInsertErr } = await admin
+      .from("document_chunks")
+      .insert(chunkRows as any);
+
+    if (chunkInsertErr) {
+      await admin
+        .from("documents")
+        .update({
+          status: "failed",
+          error_message: `Reindex chunk insert failed: ${chunkInsertErr.message}`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", documentId);
+
+      return NextResponse.json(
+        { error: "Failed to save reindexed document chunks", details: chunkInsertErr.message },
+        { status: 500 }
+      );
     }
 
     // 8. Update document status to indexed
-    const nextIndexVersion = (document.index_version || 1) + 1;
     const { data: updatedDoc, error: updateErr } = await admin
       .from("documents")
       .update({

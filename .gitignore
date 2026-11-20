@@ -41,5 +41,9 @@ pnpm-debug.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Supabase CLI temporary files
+supabase/.temp/
+.temp/
+
 # Classified internal documentation, specs, audits and skills
 classified/

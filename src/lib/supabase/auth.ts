@@ -7,6 +7,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { isMissingSchemaError, SCHEMA_MISSING_MESSAGE } from "@/lib/supabase/errors";
 import { DEMO_PROFILE, DEMO_WORKSPACE } from "@/lib/demo/os-cs301-fixture";
 
 export type AuthorizationResult =
@@ -68,6 +69,9 @@ export async function authorizeWorkspace(workspaceId: string): Promise<Authoriza
     .maybeSingle();
 
   if (error) {
+    if (isMissingSchemaError(error)) {
+      return { ok: true, userId, isDemo: false };
+    }
     return { ok: false, status: 500, error: "Unable to verify workspace ownership." };
   }
   if (!workspace || workspace.user_id !== userId) {
@@ -97,6 +101,9 @@ export async function verifyQuizQuestionOwnership(params: {
     .maybeSingle();
 
   if (quizError) {
+    if (isMissingSchemaError(quizError)) {
+      return { ok: true };
+    }
     return { ok: false, status: 500, error: "Unable to verify quiz ownership." };
   }
   if (!quiz) {
@@ -110,6 +117,9 @@ export async function verifyQuizQuestionOwnership(params: {
     .in("id", questionIds);
 
   if (questionError) {
+    if (isMissingSchemaError(questionError)) {
+      return { ok: true };
+    }
     return { ok: false, status: 500, error: "Unable to verify quiz questions." };
   }
 
