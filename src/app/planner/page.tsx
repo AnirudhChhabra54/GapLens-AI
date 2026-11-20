@@ -48,6 +48,8 @@ export default function PlannerPage() {
     toggleTaskCompletion,
     setDailyMinutes,
     regenerateSchedule,
+    setRevisionSchedule,
+    isDemo,
   } = useWorkspace();
 
   const [copilotOpen, setCopilotOpen] = useState(false);
@@ -76,19 +78,32 @@ export default function PlannerPage() {
       ? Math.min(100, (plan.totalAllocatedMinutes / plan.totalAvailableMinutes) * 100)
       : 0;
 
-  const onBudgetChange = (value: number) => {
+  const onBudgetChange = async (value: number) => {
     setDailyMinutes(value);
-    regenerateSchedule(value);
-    fetch("/api/planner/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        workspaceId: workspace.id,
-        dailyMinutes: value,
-        daysRemaining: plan.totalDays || 7,
-        examDate: plan.examDate || workspace.exam_date || null,
-      }),
-    }).catch(() => undefined);
+    if (isDemo) {
+      regenerateSchedule(value);
+      return;
+    }
+    try {
+      const res = await fetch("/api/planner/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: workspace.id,
+          dailyMinutes: value,
+          daysRemaining: plan.totalDays || 7,
+          examDate: plan.examDate || workspace.exam_date || null,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.plan) {
+        setRevisionSchedule(data.plan);
+      } else {
+        regenerateSchedule(value);
+      }
+    } catch {
+      regenerateSchedule(value);
+    }
   };
 
   return (
@@ -487,7 +502,7 @@ export default function PlannerPage() {
             .map((t) => (
               <Link
                 key={t.id}
-                href="/diagnostic"
+                href={`/diagnostic?mode=retest&topicId=${t.id}`}
                 className="inline-flex items-center gap-1.5 rounded-control border border-[#E8CFC4] bg-[#FAF2EE] px-3 py-1.5 text-xs text-[#85553F] hover:bg-[#F3E8E1] transition"
               >
                 <Clock className="h-3 w-3" />

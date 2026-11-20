@@ -51,6 +51,7 @@ const DEFAULT_SUGGESTIONS = [
 interface CopilotDrawerProps {
   isOpen: boolean;
   onClose: () => void;
+  activeTopicId?: string;
   activeTopicTitle?: string;
   className?: string;
 }
@@ -58,6 +59,7 @@ interface CopilotDrawerProps {
 export function CopilotDrawer({
   isOpen,
   onClose,
+  activeTopicId,
   activeTopicTitle,
   className,
 }: CopilotDrawerProps) {
@@ -119,7 +121,7 @@ export function CopilotDrawer({
         body: JSON.stringify({
           workspaceId: workspace?.id || "10000000-0000-0000-0000-000000000001",
           message: messageText,
-          topicId: undefined,
+          topicId: activeTopicId || undefined,
           history: messages.map((m) => ({ role: m.role, content: m.content })),
         }),
       });

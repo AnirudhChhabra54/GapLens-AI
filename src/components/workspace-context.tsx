@@ -58,6 +58,8 @@ interface WorkspaceContextType {
   triggerRetestTopic: (topicId: string, simulatedScore: number) => void;
   applyAssessmentResults: (results: AssessmentTopicResult[]) => void;
   regenerateSchedule: (minutes: number) => RevisionPlanOverview;
+  setRevisionSchedule: React.Dispatch<React.SetStateAction<RevisionPlanOverview>>;
+  updateWorkspaceSettings: (settings: { title?: string; examDate?: string | null; dailyStudyMinutes?: number }) => Promise<void>;
   resetToDemo: () => void;
 }
 
@@ -240,16 +242,27 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
             setDocuments(restoredDocs);
             setTopics(restoredTopics);
             setPrerequisites(restoredPrereqs);
-            setGapReport(createEmptyGapReport(restoredWorkspace));
-            setRevisionSchedule(createEmptySchedule(restoredWorkspace));
+            if (parsed.gapReport) setGapReport(parsed.gapReport);
+            else setGapReport(createEmptyGapReport(restoredWorkspace));
+
+            if (parsed.revisionSchedule) setRevisionSchedule(parsed.revisionSchedule);
+            else setRevisionSchedule(createEmptySchedule(restoredWorkspace));
+
+            // Hydrate gap report from server
+            fetch(`/api/gap-report?workspaceId=${restoredWorkspace.id}`)
+              .then((r) => r.json())
+              .then((d) => {
+                if (d && !d.error) setGapReport(d);
+              })
+              .catch(() => undefined);
 
             // Hydrate from live Supabase if credentials and session exist
             supabase
               .from("documents")
               .select("*")
               .eq("workspace_id", restoredWorkspace.id)
-              .then(({ data }) => {
-                if (data && data.length > 0) setDocuments(data as DocumentRow[]);
+              .then(({ data, error }) => {
+                if (!error && data && data.length > 0) setDocuments(data as DocumentRow[]);
               });
 
             supabase
@@ -257,16 +270,16 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
               .select("*")
               .eq("workspace_id", restoredWorkspace.id)
               .order("order_index", { ascending: true })
-              .then(({ data }) => {
-                if (data && data.length > 0) setTopics(data as TopicRow[]);
+              .then(({ data, error }) => {
+                if (!error && data && data.length > 0) setTopics(data as TopicRow[]);
               });
 
             supabase
               .from("topic_prerequisites")
               .select("*")
               .eq("workspace_id", restoredWorkspace.id)
-              .then(({ data }) => {
-                if (data && data.length > 0) setPrerequisites(data as TopicPrerequisiteRow[]);
+              .then(({ data, error }) => {
+                if (!error && data && data.length > 0) setPrerequisites(data as TopicPrerequisiteRow[]);
               });
           }
 
@@ -331,6 +344,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     documents: DocumentRow[];
     topics: TopicRow[];
     prerequisites: TopicPrerequisiteRow[];
+    gapReport: GapReportData;
+    revisionSchedule: RevisionPlanOverview;
   }>) => {
     if (typeof window !== "undefined") {
       try {
@@ -346,6 +361,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           documents: isDemo ? [] : documents,
           topics: isDemo ? [] : topics,
           prerequisites: isDemo ? [] : prerequisites,
+          gapReport: isDemo ? undefined : gapReport,
+          revisionSchedule: isDemo ? undefined : revisionSchedule,
           ...updates,
         };
         localStorage.setItem("gaplens_auth_state", JSON.stringify(current));
@@ -356,6 +373,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const loginAsDemo = () => {
+    if (typeof document !== "undefined") {
+      document.cookie = "gaplens_demo_session=true; path=/; max-age=86400; SameSite=Lax";
+    }
     setProfile(DEMO_PROFILE);
     setWorkspace(DEMO_WORKSPACE);
     setIsLoggedIn(true);
@@ -390,100 +410,32 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       const { data } = await supabase.auth.getUser();
       user = data?.user || null;
     } catch {
-      // offline / mock mode
+      user = null;
     }
 
-    const userId = user?.id || crypto.randomUUID();
-    const resolvedEmail = user?.email || email;
-
-    let customProfile: ProfileRow = {
-      id: userId,
-      email: resolvedEmail,
-      full_name: name || resolvedEmail.split("@")[0],
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    let customWorkspace: WorkspaceRow = {
-      id: crypto.randomUUID(),
-      user_id: userId,
-      title: "My Course Workspace",
-      description: null,
-      exam_date: null,
-      daily_study_minutes: 60,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    let initialDocs: DocumentRow[] = [];
-    let initialTopics: TopicRow[] = [];
-    let initialPrereqs: TopicPrerequisiteRow[] = [];
-
-    if (user) {
-      try {
-        const { data: existingProfile } = (await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", user.id)
-          .maybeSingle()) as any;
-
-        if (existingProfile) {
-          customProfile = existingProfile as ProfileRow;
-        } else {
-          const { data: createdProfile } = (await supabase
-            .from("profiles")
-            .insert({
-              id: user.id,
-              email: resolvedEmail,
-              full_name: name || resolvedEmail.split("@")[0],
-            } as any)
-            .select()
-            .single()) as any;
-
-          if (createdProfile) {
-            customProfile = createdProfile as ProfileRow;
-          }
-        }
-
-        const { data: existingWorkspace } = (await supabase
-          .from("workspaces")
-          .select("*")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: true })
-          .limit(1)
-          .maybeSingle()) as any;
-
-        if (existingWorkspace) {
-          customWorkspace = existingWorkspace as WorkspaceRow;
-
-          const { data: dbDocs } = await supabase.from("documents").select("*").eq("workspace_id", customWorkspace.id);
-          const { data: dbTopics } = await supabase.from("topics").select("*").eq("workspace_id", customWorkspace.id).order("order_index", { ascending: true });
-          const { data: dbPrereqs } = await supabase.from("topic_prerequisites").select("*").eq("workspace_id", customWorkspace.id);
-
-          if (dbDocs) initialDocs = dbDocs as DocumentRow[];
-          if (dbTopics) initialTopics = dbTopics as TopicRow[];
-          if (dbPrereqs) initialPrereqs = dbPrereqs as TopicPrerequisiteRow[];
-        } else {
-          const { data: createdWorkspace } = (await supabase
-            .from("workspaces")
-            .insert({
-              user_id: user.id,
-              title: "My Course Workspace",
-              description: null,
-              exam_date: null,
-              daily_study_minutes: 60,
-            } as any)
-            .select()
-            .single()) as any;
-
-          if (createdWorkspace) {
-            customWorkspace = createdWorkspace as WorkspaceRow;
-          }
-        }
-      } catch (dbErr) {
-        console.warn("[WorkspaceContext] DB sync notice:", dbErr);
-      }
+    if (!user) {
+      throw new Error(
+        "Unable to establish authenticated user session. Please ensure Supabase is configured with valid credentials, or use the 1-click Demo workspace."
+      );
     }
+
+    // Call atomic server-side provisioning route
+    const res = await fetch("/api/auth/provision", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fullName: name || email.split("@")[0] }),
+    });
+
+    const provisionData = await res.json();
+    if (!res.ok || !provisionData.success) {
+      throw new Error(provisionData.error || "Failed to provision workspace");
+    }
+
+    const customProfile: ProfileRow = provisionData.profile;
+    const customWorkspace: WorkspaceRow = provisionData.workspace;
+    const initialDocs: DocumentRow[] = provisionData.documents || [];
+    const initialTopics: TopicRow[] = provisionData.topics || [];
+    const initialPrereqs: TopicPrerequisiteRow[] = provisionData.prerequisites || [];
 
     const emptyReport = createEmptyGapReport(customWorkspace);
     const emptySchedule = createEmptySchedule(customWorkspace);
@@ -513,6 +465,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       documents: initialDocs,
       topics: initialTopics,
       prerequisites: initialPrereqs,
+      gapReport: emptyReport,
+      revisionSchedule: emptySchedule,
     });
   };
 
@@ -522,8 +476,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Ignore network errors
     }
+    if (typeof document !== "undefined") {
+      document.cookie = "gaplens_demo_session=; path=/; max-age=0; SameSite=Lax";
+    }
     setIsLoggedIn(false);
-    saveState({ isLoggedIn: false });
+    saveState({ isLoggedIn: false, isDemo: false });
   };
 
   const setDailyMinutes = (mins: number) => {
@@ -532,11 +489,60 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     saveState({ dailyMinutes: clamped });
   };
 
+  const updateWorkspaceSettings = async (settings: {
+    title?: string;
+    examDate?: string | null;
+    dailyStudyMinutes?: number;
+  }) => {
+    const updated: WorkspaceRow = {
+      ...workspace,
+      title: settings.title ?? workspace.title,
+      exam_date: settings.examDate !== undefined ? settings.examDate : workspace.exam_date,
+      daily_study_minutes: settings.dailyStudyMinutes ?? workspace.daily_study_minutes,
+      updated_at: new Date().toISOString(),
+    };
+    setWorkspace(updated);
+    if (settings.dailyStudyMinutes) {
+      setDailyMinutesState(settings.dailyStudyMinutes);
+    }
+    saveState({ workspace: updated, dailyMinutes: updated.daily_study_minutes });
+
+    if (!isDemo && workspace?.id) {
+      try {
+        await fetch(`/api/workspaces/${workspace.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: settings.title,
+            examDate: settings.examDate,
+            dailyStudyMinutes: settings.dailyStudyMinutes,
+          }),
+        });
+      } catch (err) {
+        console.warn("[WorkspaceContext] Failed to persist workspace settings:", err);
+      }
+    }
+  };
+
   const toggleTaskCompletion = (taskId: string) => {
     setCompletedTaskIds((prev) => {
       const exists = prev.includes(taskId);
+      const nextStatus = exists ? "pending" : "completed";
       const next = exists ? prev.filter((id) => id !== taskId) : [...prev, taskId];
       saveState({ completedTasks: next });
+
+      if (!isDemo && workspace?.id) {
+        fetch("/api/planner/tasks", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId: workspace.id,
+            taskId,
+            status: nextStatus,
+            completedAt: nextStatus === "completed" ? new Date().toISOString() : null,
+          }),
+        }).catch(() => undefined);
+      }
       return next;
     });
   };
@@ -714,6 +720,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         triggerRetestTopic,
         applyAssessmentResults,
         regenerateSchedule,
+        setRevisionSchedule,
+        updateWorkspaceSettings,
         resetToDemo,
       }}
     >

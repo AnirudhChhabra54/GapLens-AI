@@ -135,10 +135,10 @@ flowchart LR
     end
 
     subgraph API["Next.js Serverless Routes"]
-        R_UP["/api/upload/sign\n/api/documents/process"]
+        R_UP["/api/upload/sign\n/api/documents/process\n/api/documents/[id]\n/api/documents/[id]/reindex"]
         R_QZ["/api/quiz/generate\n/api/quiz/evaluate"]
-        R_GAP["/api/gap-report\n/api/topics/tree"]
-        R_PLN["/api/planner/generate\n/api/copilot/chat"]
+        R_GAP["/api/gap-report\n/api/topics/extract\n/api/topics/tree\n/api/papers/map"]
+        R_PLN["/api/planner/generate\n/api/planner/tasks\n/api/workspaces/[id]\n/api/copilot/chat"]
     end
 
     subgraph Engines["Core Algorithmic Engines"]

@@ -512,7 +512,7 @@ export default function GapReportPage() {
                     {(topic.examWeight * 100).toFixed(0)}%
                   </td>
                   <td className="py-3 px-3 text-right">
-                    <Link href="/diagnostic">
+                    <Link href={`/diagnostic?mode=retest&topicId=${topic.topicId}`}>
                       <Button variant="quiet" size="sm" className="text-accent">
                         <Target className="h-3 w-3" />
                         <span>Retest</span>

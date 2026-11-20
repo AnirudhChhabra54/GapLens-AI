@@ -18,6 +18,7 @@ import {
   Calendar,
   Sparkles,
   User,
+  Settings,
 } from "lucide-react";
 import { useWorkspace } from "@/components/workspace-context";
 import { cn } from "@/lib/utils";
@@ -34,11 +35,34 @@ const NAV_ITEMS = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { workspace, profile, loginAsDemo, logout } = useWorkspace();
+  const { workspace, profile, isLoggedIn, isDemo, loginAsDemo, logout, updateWorkspaceSettings } = useWorkspace();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTitle, setSettingsTitle] = useState(workspace?.title || "");
+  const [settingsExamDate, setSettingsExamDate] = useState(workspace?.exam_date || "");
+  const [settingsMinutes, setSettingsMinutes] = useState(workspace?.daily_study_minutes || 60);
+  const [savingSettings, setSavingSettings] = useState(false);
 
   const isPublicRoute = pathname === "/" || pathname === "/login";
+
+  React.useEffect(() => {
+    if (!isPublicRoute && !isLoggedIn) {
+      router.replace("/login");
+    }
+  }, [isPublicRoute, isLoggedIn, router]);
+
+  React.useEffect(() => {
+    if (workspace) {
+      setSettingsTitle(workspace.title || "");
+      setSettingsExamDate(workspace.exam_date || "");
+      setSettingsMinutes(workspace.daily_study_minutes || 60);
+    }
+  }, [workspace]);
+
+  if (!isPublicRoute && !isLoggedIn) {
+    return null;
+  }
 
   // Public Shell: Minimal top navigation and simple editorial footer
   if (isPublicRoute) {
@@ -212,8 +236,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
 
-          {/* Top Actions: Study Assistant (Copilot) Drawer Trigger */}
-          <div className="flex items-center gap-3">
+          {/* Top Actions: Workspace Settings & Study Assistant Drawer Trigger */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-card bg-surface hover:bg-surface-subtle border border-brandBorder text-xs font-medium text-brandText-secondary transition-all"
+              title="Course workspace settings"
+            >
+              <Settings className="h-3.5 w-3.5 text-brandText-secondary" />
+              <span className="hidden sm:inline">Course settings</span>
+            </button>
+
             <button
               onClick={() => setCopilotOpen(true)}
               className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-card bg-surface hover:bg-surface-subtle border border-brandBorder text-xs font-semibold text-brandText-primary shadow-subtle transition-all"
@@ -293,6 +327,110 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         isOpen={copilotOpen}
         onClose={() => setCopilotOpen(false)}
       />
+
+      {/* 5. Course Workspace Settings Modal */}
+      {settingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-card border border-brandBorder bg-surface p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-brandBorder pb-3">
+              <div className="flex items-center gap-2">
+                <Settings className="h-4 w-4 text-accent" />
+                <h3 className="text-sm font-semibold text-brandText-primary">
+                  Course Workspace Settings
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(false)}
+                className="rounded-control p-1 text-brandText-muted hover:text-brandText-primary transition"
+                aria-label="Close settings modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setSavingSettings(true);
+                try {
+                  await updateWorkspaceSettings({
+                    title: settingsTitle.trim() || undefined,
+                    examDate: settingsExamDate ? settingsExamDate : null,
+                    dailyStudyMinutes: Number(settingsMinutes) || 60,
+                  });
+                  setSettingsOpen(false);
+                } finally {
+                  setSavingSettings(false);
+                }
+              }}
+              className="space-y-4 text-left"
+            >
+              <div>
+                <label className="block text-xs font-semibold text-brandText-primary mb-1">
+                  Course Title
+                </label>
+                <input
+                  type="text"
+                  value={settingsTitle}
+                  onChange={(e) => setSettingsTitle(e.target.value)}
+                  placeholder="e.g. Operating Systems (CS-301)"
+                  className="w-full px-3 py-2 text-xs rounded-control border border-brandBorder bg-surface-subtle focus:bg-surface focus:border-accent focus:outline-none transition-colors"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-brandText-primary mb-1">
+                  Exam Date
+                </label>
+                <input
+                  type="date"
+                  value={settingsExamDate}
+                  onChange={(e) => setSettingsExamDate(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-control border border-brandBorder bg-surface-subtle focus:bg-surface focus:border-accent focus:outline-none transition-colors"
+                />
+                <span className="text-[10px] text-brandText-muted mt-0.5 block">
+                  Used by the revision scheduler to determine days remaining.
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-brandText-primary mb-1">
+                  Daily Study Budget (Minutes / Day)
+                </label>
+                <input
+                  type="number"
+                  min={15}
+                  max={480}
+                  step={15}
+                  value={settingsMinutes}
+                  onChange={(e) => setSettingsMinutes(Number(e.target.value))}
+                  className="w-full px-3 py-2 text-xs rounded-control border border-brandBorder bg-surface-subtle focus:bg-surface focus:border-accent focus:outline-none transition-colors"
+                  required
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-brandBorder">
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen(false)}
+                  className="px-3 py-1.5 rounded-control text-xs font-medium text-brandText-secondary hover:bg-surface-subtle transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingSettings}
+                  className="px-4 py-1.5 rounded-control bg-accent hover:bg-accent-hover text-white text-xs font-semibold shadow-subtle transition-all disabled:opacity-50"
+                >
+                  {savingSettings ? "Saving..." : "Save settings"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

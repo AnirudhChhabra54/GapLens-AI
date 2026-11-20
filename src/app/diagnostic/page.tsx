@@ -8,8 +8,9 @@
 // Decoupled confidence capture, clean question typography, zero-leak rubric evaluation.
 // ==============================================================================
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   Stethoscope,
   ShieldCheck,
@@ -136,9 +137,15 @@ const CONFIDENCE_OPTIONS: Array<{ id: ConfidenceLevel; label: string; descriptio
   { id: "high", label: "High confidence", description: "Completely certain of answer" },
 ];
 
-export default function DiagnosticPage() {
+function DiagnosticContent() {
   const { workspace, topics, applyAssessmentResults, isDemo } = useWorkspace();
-  const [mode, setMode] = useState<QuizMode>("diagnostic");
+  const searchParams = useSearchParams();
+  const urlMode = searchParams.get("mode") as QuizMode | null;
+  const urlTopicId = searchParams.get("topicId");
+
+  const [mode, setMode] = useState<QuizMode>(
+    urlMode && ["diagnostic", "drill", "retest", "exam"].includes(urlMode) ? urlMode : "diagnostic"
+  );
   const [currentIndex, setCurrentIndex] = useState(0);
   const [responses, setResponses] = useState<Record<string, string>>({});
   const [confidence, setConfidence] = useState<Record<string, ConfidenceLevel>>({});
@@ -147,6 +154,7 @@ export default function DiagnosticPage() {
   const [error, setError] = useState<string | null>(null);
   const [planMessage, setPlanMessage] = useState<string | null>(null);
   const [showHowItWorks, setShowHowItWorks] = useState(false);
+  const [examSecondsLeft, setExamSecondsLeft] = useState(20 * 60);
 
   // Dynamic AI question generator state & runner integration
   const [generatingQuiz, setGeneratingQuiz] = useState(false);
@@ -154,6 +162,28 @@ export default function DiagnosticPage() {
   const [showGeneratorModal, setShowGeneratorModal] = useState(false);
   const [activeQuizId, setActiveQuizId] = useState<string | null>(null);
   const [activeCustomQuestions, setActiveCustomQuestions] = useState<SafeQuestion[] | null>(null);
+
+  useEffect(() => {
+    if (urlMode && ["diagnostic", "drill", "retest", "exam"].includes(urlMode)) {
+      setMode(urlMode);
+    }
+  }, [urlMode]);
+
+  // Exam simulation timer
+  useEffect(() => {
+    if (mode !== "exam" || result !== null) return;
+    setExamSecondsLeft(20 * 60);
+    const interval = setInterval(() => {
+      setExamSecondsLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [mode, result]);
 
   const generateDynamicQuizPreview = async () => {
     setGeneratingQuiz(true);
@@ -167,6 +197,7 @@ export default function DiagnosticPage() {
           targetCount: 4,
           difficulty: 2,
           quizMode: mode,
+          topicIds: urlTopicId ? [urlTopicId] : undefined,
         }),
       });
       const data = await res.json();
@@ -183,6 +214,37 @@ export default function DiagnosticPage() {
     }
   };
 
+  // Auto-generate for deep-linked targeted topic if custom workspace
+  useEffect(() => {
+    if (urlTopicId && !activeCustomQuestions && workspace?.id && !isDemo) {
+      fetch("/api/quiz/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: workspace.id,
+          topicIds: [urlTopicId],
+          targetCount: 3,
+          quizMode: mode,
+        }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && data.questions?.length > 0) {
+            const mapped: SafeQuestion[] = data.questions.map((g: any) => ({
+              id: g.id,
+              topic_id: g.topicId,
+              question_type: g.questionType,
+              question_text: g.questionText,
+              options: g.options,
+            }));
+            setActiveCustomQuestions(mapped);
+            setActiveQuizId(data.quizId || null);
+          }
+        })
+        .catch(() => undefined);
+    }
+  }, [urlTopicId, workspace?.id, isDemo, activeCustomQuestions, mode]);
+
   const weakTopicIds = useMemo(
     () => new Set(topics.filter((t) => t.classification === "weak").map((t) => t.id)),
     [topics]
@@ -195,12 +257,16 @@ export default function DiagnosticPage() {
     if (!isDemo) {
       return [];
     }
+    if (urlTopicId) {
+      const matching = SAFE_QUIZ_QUESTIONS.filter((q) => q.topic_id === urlTopicId);
+      if (matching.length > 0) return matching;
+    }
     if (mode === "retest" || mode === "drill") {
       const focused = SAFE_QUIZ_QUESTIONS.filter((q) => weakTopicIds.has(q.topic_id));
       return focused.length > 0 ? focused : SAFE_QUIZ_QUESTIONS;
     }
     return SAFE_QUIZ_QUESTIONS;
-  }, [mode, weakTopicIds, activeCustomQuestions, isDemo]);
+  }, [mode, weakTopicIds, activeCustomQuestions, isDemo, urlTopicId]);
 
   const activeQuestion = questions[currentIndex];
   const topicTitle = useMemo(
@@ -323,6 +389,46 @@ export default function DiagnosticPage() {
     }
   };
 
+  const submitExamOnExpiry = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const payload = {
+        quizId: activeQuizId || (isDemo ? DEMO_QUIZ_ID : crypto.randomUUID()),
+        workspaceId: workspace?.id || DEMO_WORKSPACE_ID,
+        answers: questions.map((q) => ({
+          questionId: q.id,
+          response: responses[q.id] || "No response provided before time expired.",
+          confidence: confidence[q.id] || "low",
+          questionText: q.question_text,
+          questionType: q.question_type,
+          options: q.options,
+          topicId: q.topic_id,
+        })),
+      };
+      const res = await fetch("/api/quiz/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setResult(data as QuizEvaluationResponse);
+      }
+    } catch (err: any) {
+      setError(err?.message || "Failed to submit exam.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (mode === "exam" && examSecondsLeft === 0 && !result && !loading && questions.length > 0) {
+      submitExamOnExpiry();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [examSecondsLeft, mode, result, loading, questions.length]);
+
   const activeModeInfo = MODES.find((m) => m.id === mode);
 
   return (
@@ -337,6 +443,14 @@ export default function DiagnosticPage() {
         />
 
         <div className="flex items-center gap-2.5">
+          {mode === "exam" && !result && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-control bg-[#FAF2EE] border border-[#E8CFC4] text-[#85553F] font-mono text-xs font-semibold">
+              <Clock className="h-3.5 w-3.5 animate-pulse text-accent" />
+              <span>
+                Exam Timer: {Math.floor(examSecondsLeft / 60)}:{(examSecondsLeft % 60).toString().padStart(2, "0")}
+              </span>
+            </div>
+          )}
           <Button
             variant="secondary"
             size="sm"
@@ -903,5 +1017,19 @@ export default function DiagnosticPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function DiagnosticPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="max-w-5xl mx-auto py-12 text-center text-xs text-brandText-muted">
+          Loading diagnostic lab...
+        </div>
+      }
+    >
+      <DiagnosticContent />
+    </Suspense>
   );
 }

@@ -24,6 +24,7 @@ import {
   ChevronUp,
   FileUp,
   Sparkles,
+  X,
 } from "lucide-react";
 import { useWorkspace } from "@/components/workspace-context";
 import { PrerequisiteGraph } from "@/components/prerequisite-graph";
@@ -49,6 +50,16 @@ export default function MaterialsPage() {
   const [isExtractingTopics, setIsExtractingTopics] = useState(false);
   const [isMappingPapers, setIsMappingPapers] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  // OCR resolution modal state
+  const [ocrModalOpen, setOcrModalOpen] = useState(false);
+  const [ocrTargetDoc, setOcrTargetDoc] = useState<{ id: string; filename: string } | null>(null);
+  const [ocrInputText, setOcrInputText] = useState("");
+  const [isResolvingOcr, setIsResolvingOcr] = useState(false);
+
+  // Topic Tree state (from GET /api/topics/tree)
+  const [topicTree, setTopicTree] = useState<any[] | null>(null);
+  const [loadingTree, setLoadingTree] = useState(false);
 
   // Sync with context initialDocs
   useEffect(() => {
@@ -349,7 +360,7 @@ export default function MaterialsPage() {
             setIsUploading(false);
 
             const newDoc: DocumentRow = {
-              id: `doc-${Date.now()}`,
+              id: crypto.randomUUID(),
               workspace_id: workspace?.id || "10000000-0000-0000-0000-000000000001",
               user_id: "00000000-0000-0000-0000-000000000001",
               filename: fileName,
@@ -380,15 +391,131 @@ export default function MaterialsPage() {
     }, 500);
   };
 
-  const handleDeleteDoc = (id: string) => {
+  const handleDeleteDoc = async (id: string) => {
+    if (!isDemo && workspace?.id) {
+      try {
+        const res = await fetch(`/api/documents/${id}?workspaceId=${workspace.id}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setUploadError(data.error || "Failed to delete document from database.");
+          return;
+        }
+      } catch (err: any) {
+        setUploadError(err.message || "Failed to delete document.");
+        return;
+      }
+    }
     setDocuments((prev) => prev.filter((d) => d.id !== id));
+    setActionSuccess("Document removed.");
   };
 
-  const handleReindexDoc = (id: string) => {
+  const handleReindexDoc = async (id: string) => {
+    if (!isDemo && workspace?.id) {
+      try {
+        const res = await fetch(`/api/documents/${id}/reindex`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workspaceId: workspace.id }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          setUploadError(data.error || "Failed to reindex document.");
+          return;
+        }
+        setDocuments((prev) =>
+          prev.map((d) =>
+            d.id === id
+              ? {
+                  ...d,
+                  status: "indexed",
+                  index_version: (data.indexVersion as number) ?? d.index_version + 1,
+                  chunk_count: data.chunkCount ?? d.chunk_count,
+                  updated_at: new Date().toISOString(),
+                }
+              : d
+          )
+        );
+        setActionSuccess("Document re-indexed successfully.");
+        return;
+      } catch (err: any) {
+        setUploadError(err.message || "Failed to reindex document.");
+        return;
+      }
+    }
     setDocuments((prev) =>
       prev.map((d) => (d.id === id ? { ...d, status: "indexed", updated_at: new Date().toISOString() } : d))
     );
+    setActionSuccess("Document re-indexed.");
   };
+
+  const handleResolveOcr = async () => {
+    if (!ocrTargetDoc || !ocrInputText.trim() || !workspace?.id) return;
+    setIsResolvingOcr(true);
+    setUploadError(null);
+    try {
+      const res = await fetch("/api/documents/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: workspace.id,
+          documentId: ocrTargetDoc.id,
+          filename: ocrTargetDoc.filename,
+          ocrText: ocrInputText.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to process OCR text.");
+      }
+      setDocuments((prev) =>
+        prev.map((d) =>
+          d.id === ocrTargetDoc.id
+            ? {
+                ...d,
+                status: "indexed",
+                chunk_count: data.chunkCount || d.chunk_count,
+                extracted_char_count: ocrInputText.trim().length,
+                updated_at: new Date().toISOString(),
+              }
+            : d
+        )
+      );
+      setStateMachineStage("indexed");
+      setActionSuccess(`OCR text resolved. Document indexed with ${data.chunkCount || 0} chunks.`);
+      setOcrModalOpen(false);
+      setOcrTargetDoc(null);
+      setOcrInputText("");
+    } catch (err: any) {
+      setUploadError(err.message || "Failed to resolve OCR.");
+    } finally {
+      setIsResolvingOcr(false);
+    }
+  };
+
+  const fetchTopicTree = async () => {
+    if (!workspace?.id) return;
+    setLoadingTree(true);
+    try {
+      const res = await fetch(`/api/topics/tree?workspaceId=${workspace.id}`);
+      const data = await res.json();
+      if (res.ok && data.tree) {
+        setTopicTree(data.tree);
+      }
+    } catch {
+      // Fallback to flat outline
+    } finally {
+      setLoadingTree(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "outline") {
+      fetchTopicTree();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, workspace?.id, topics.length]);
 
   // Group topics by Unit for Outline View
   const unitsMap = new Map<string, typeof topics>();
@@ -547,8 +674,26 @@ export default function MaterialsPage() {
                 </div>
 
                 {stateMachineStage === "needs_ocr" && (
-                  <div className="mt-3 p-2.5 rounded-control bg-[#FAF2EE] border border-[#E8CFC4] text-xs text-[#85553F]">
-                    <strong>Needs OCR:</strong> Scanned image PDF detected (&lt;50 characters per page). Text extraction requires OCR preprocessing.
+                  <div className="mt-3 p-2.5 rounded-control bg-[#FAF2EE] border border-[#E8CFC4] text-xs text-[#85553F] space-y-2">
+                    <div>
+                      <strong>Needs OCR:</strong> Scanned image PDF detected (&lt;50 characters per page). Text extraction requires OCR preprocessing.
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        const doc = documents.find((d) => d.status === "needs_ocr") || {
+                          id: crypto.randomUUID(),
+                          filename: uploadFilename || "Scanned_Document.pdf",
+                        };
+                        setOcrTargetDoc({ id: doc.id, filename: doc.filename });
+                        setOcrModalOpen(true);
+                      }}
+                      className="text-xs text-[#85553F]"
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      <span>Paste extracted OCR text</span>
+                    </Button>
                   </div>
                 )}
               </div>
@@ -677,6 +822,21 @@ export default function MaterialsPage() {
                           <span>{isMappingPapers ? "Mapping..." : "Analyze weights"}</span>
                         </Button>
                       )}
+                      {doc.status === "needs_ocr" && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setOcrTargetDoc({ id: doc.id, filename: doc.filename });
+                            setOcrModalOpen(true);
+                          }}
+                          className="text-xs text-[#85553F]"
+                          title="Resolve OCR"
+                        >
+                          <FileText className="h-3.5 w-3.5" />
+                          <span>Resolve OCR</span>
+                        </Button>
+                      )}
                       <Button
                         variant="quiet"
                         size="sm"
@@ -796,7 +956,11 @@ export default function MaterialsPage() {
             </div>
 
             <div className="space-y-4">
-              {topics.length === 0 ? (
+              {loadingTree ? (
+                <div className="py-10 text-center text-xs text-brandText-muted font-mono">
+                  Loading curriculum tree hierarchy...
+                </div>
+              ) : topics.length === 0 ? (
                 <div className="py-10 text-center space-y-3">
                   <div className="h-10 w-10 rounded-full bg-accent-soft text-accent flex items-center justify-center mx-auto">
                     <Layers className="h-5 w-5" />
@@ -806,6 +970,79 @@ export default function MaterialsPage() {
                     Upload your course syllabus in the upload area above and click &quot;Extract topics&quot; to build your topic tree.
                   </p>
                 </div>
+              ) : topicTree && topicTree.length > 0 ? (
+                topicTree.map((rootNode: any, rIdx: number) => {
+                  const hasChildren = rootNode.children && rootNode.children.length > 0;
+                  const childNodes = hasChildren ? rootNode.children : [rootNode];
+                  return (
+                    <div
+                      key={rootNode.id || rIdx}
+                      className="rounded-card border border-brandBorder bg-surface-subtle p-4 space-y-3"
+                    >
+                      <div className="flex items-center justify-between pb-2 border-b border-brandBorder">
+                        <div>
+                          <span className="text-xs font-semibold text-brandText-primary">
+                            {hasChildren ? rootNode.title : `Module: ${rootNode.unit_module || rootNode.title}`}
+                          </span>
+                          {rootNode.description && (
+                            <p className="text-[11px] text-brandText-secondary mt-0.5">
+                              {rootNode.description}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-xs text-brandText-muted font-mono">
+                          {childNodes.length} {childNodes.length === 1 ? "topic" : "topics"}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                        {childNodes.map((topic: any) => (
+                          <div
+                            key={topic.id}
+                            className="rounded-control border border-brandBorder bg-surface p-3 flex items-center justify-between text-xs"
+                          >
+                            <div className="min-w-0 flex-1 pr-3">
+                              <span className="font-medium text-brandText-primary block truncate">
+                                {topic.title}
+                              </span>
+                              <div className="flex items-center gap-2 mt-0.5 text-[11px] text-brandText-muted font-mono">
+                                <span>
+                                  Exam weight: {topic.exam_weight ? `${Math.round(topic.exam_weight * 100)}%` : "N/A"}
+                                </span>
+                                <span>•</span>
+                                <span>{topic.total_attempts || 0} attempts</span>
+                              </div>
+                              {topic.prerequisites && topic.prerequisites.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1.5">
+                                  {topic.prerequisites.map((p: any, pIdx: number) => (
+                                    <span
+                                      key={pIdx}
+                                      className="rounded bg-surface-subtle border border-brandBorder px-1.5 py-0.5 text-[9px] text-brandText-secondary font-mono"
+                                    >
+                                      requires: {p.prerequisiteTitle || "prerequisite"}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            <span
+                              className={`rounded px-2 py-0.5 text-[10px] font-mono font-medium shrink-0 ${
+                                topic.classification === "strong"
+                                  ? "bg-accent-soft text-accent"
+                                  : topic.classification === "medium"
+                                  ? "bg-[#FEF5E7] text-[#C27803]"
+                                  : "bg-[#FDF0EE] text-[#B84A39]"
+                              }`}
+                            >
+                              {Math.round(topic.current_mastery ?? 45)}%
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
               ) : (
                 Array.from(unitsMap.entries()).map(([unitName, unitTopics], uIdx) => (
                 <div
@@ -856,6 +1093,74 @@ export default function MaterialsPage() {
           </Card>
         )}
       </div>
+
+      {/* OCR Resolution Modal */}
+      {ocrModalOpen && ocrTargetDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-card border border-brandBorder bg-surface p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-brandBorder pb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-accent" />
+                <h3 className="text-sm font-semibold text-brandText-primary">
+                  Resolve Scanned Document OCR
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setOcrModalOpen(false);
+                  setOcrTargetDoc(null);
+                }}
+                className="rounded-control p-1 text-brandText-muted hover:text-brandText-primary transition"
+                aria-label="Close OCR modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-left">
+              <p className="text-xs text-brandText-secondary leading-relaxed">
+                Paste the extracted or transcribed text for <strong>{ocrTargetDoc.filename}</strong> below.
+                GapLens AI will automatically chunk and embed the text into your course knowledge base.
+              </p>
+
+              <div>
+                <label className="block text-xs font-semibold text-brandText-primary mb-1">
+                  Extracted Text Content
+                </label>
+                <textarea
+                  value={ocrInputText}
+                  onChange={(e) => setOcrInputText(e.target.value)}
+                  rows={8}
+                  placeholder="Paste OCR text, markdown notes, or transcription here..."
+                  className="w-full px-3 py-2 text-xs rounded-control border border-brandBorder bg-surface-subtle focus:bg-surface focus:border-accent focus:outline-none transition-colors font-mono leading-relaxed"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2 border-t border-brandBorder">
+              <button
+                type="button"
+                onClick={() => {
+                  setOcrModalOpen(false);
+                  setOcrTargetDoc(null);
+                }}
+                className="px-3 py-1.5 rounded-control text-xs font-medium text-brandText-secondary hover:bg-surface-subtle transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleResolveOcr}
+                disabled={isResolvingOcr || !ocrInputText.trim()}
+                className="px-4 py-1.5 rounded-control bg-accent hover:bg-accent-hover text-white text-xs font-semibold shadow-subtle transition-all disabled:opacity-50"
+              >
+                {isResolvingOcr ? "Processing..." : "Process and index"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
