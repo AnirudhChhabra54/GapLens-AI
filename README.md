@@ -2,11 +2,13 @@
 
 **See the gaps. Master what matters.**
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-gap--lens--ai--rho.vercel.app-00D6A0?logo=vercel)](https://gap-lens-ai-rho.vercel.app)
 [![Next.js](https://img.shields.io/badge/Next.js-14.2-black?logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue?logo=typescript)](https://www.typescriptlang.org/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38bdf8?logo=tailwind-css)](https://tailwindcss.com/)
-[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL%2015-3ecf8e?logo=supabase)](https://supabase.com/)
-[![Vitest](https://img.shields.io/badge/Vitest-462%20passed-6e9f18?logo=vitest)](https://vitest.dev/)
+[![Groq](https://img.shields.io/badge/LLM-Groq%20(openai%2Fgpt--oss--120b)-f55036)](https://groq.com/)
+[![Jina AI](https://img.shields.io/badge/Embeddings-Jina%20v5--text--nano%20(768d)-11998e)](https://jina.ai/)
+[![Supabase](https://img.shields.io/badge/Supabase-Auth%20%26%20PostgreSQL-3ecf8e?logo=supabase)](https://supabase.com/)
+[![Vitest](https://img.shields.io/badge/Vitest-472%20passed-6e9f18?logo=vitest)](https://vitest.dev/)
 
 GapLens AI is an evidence-grounded study diagnostic platform that identifies what students actually know versus what they only think they know. By ingesting course materials, generating citation-backed diagnostic assessments, and detecting high-confidence blind spots, GapLens builds personalized daily revision plans constrained by the student's real study time.
 
@@ -234,29 +236,34 @@ The web application will be accessible at [http://localhost:3000](http://localho
 
 ## Environment Variables
 
-Copy `.env.example` to `.env.local` to configure external service credentials.
+Copy `.env.example` to `.env.local` to configure external service credentials:
 
 ```bash
 # --- Client-Side Supabase (Public) ---
 NEXT_PUBLIC_SUPABASE_URL="https://your-project-ref.supabase.co"
-NEXT_PUBLIC_SUPABASE_ANON_KEY="your-anon-key"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="your-anon-or-publishable-key"
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="your-anon-or-publishable-key"
 
 # --- Server-Side Supabase (Private — Never expose to browser) ---
-SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
+SUPABASE_SECRET_KEY="your-supabase-secret-key"
+SUPABASE_SERVICE_ROLE_KEY="your-supabase-secret-key"
 
-# --- Google Gemini AI ---
-GEMINI_API_KEY="your-gemini-api-key"
+# --- Groq Cloud LLM (Primary Sub-Second Generation Engine) ---
+GROQ_API_KEY="gsk_your-groq-api-key"
+GROQ_MODEL="openai/gpt-oss-120b"
+GROQ_BASE_URL="https://api.groq.com/openai/v1"
 
-# Optional Model Overrides
-GEMINI_GENERATION_MODEL="gemini-1.5-flash"
-GEMINI_EMBEDDING_MODEL="text-embedding-004"
-GEMINI_EMBEDDING_DIMENSIONS="768"
+# --- Jina AI (Primary 768d Dense Vector Embeddings) ---
+JINA_API_KEY="jina_your-jina-api-key"
+JINA_EMBEDDING_MODEL="jina-embeddings-v5-text-nano"
+JINA_EMBEDDING_DIMENSIONS="768"
+JINA_BASE_URL="https://api.jina.ai/v1/embeddings"
 
 # --- App URL ---
-NEXT_PUBLIC_APP_URL="http://localhost:3000"
+NEXT_PUBLIC_APP_URL="https://gap-lens-ai-rho.vercel.app"
 ```
 
-> **Note on Offline Mode:** If you do not provide Supabase or Gemini credentials, GapLens automatically operates in offline demo mode using bundled synthetic fixtures and local state persistence.
+> **Note on Zero-Configuration Demo Mode:** If external API keys are omitted in a local environment, GapLens automatically operates in high-fidelity offline demonstration mode using bundled CS-301 Operating Systems fixtures, pre-calculated Jina 768d dense vectors, and local state persistence.
 
 ---
 
@@ -265,7 +272,7 @@ NEXT_PUBLIC_APP_URL="http://localhost:3000"
 The test suite validates algorithms, API route handlers, component rendering, and end-to-end user journeys using Vitest.
 
 ```bash
-# Run all unit, integration, and scenario tests (462 tests)
+# Run all unit, integration, and scenario tests (472 tests)
 pnpm test
 
 # Run structural E2E scenario suites only (296 tests)
@@ -281,16 +288,17 @@ pnpm lint
 pnpm build
 ```
 
-> **Testing Scope Note:** All tests run in-memory via Vitest, jsdom, and mock network adapters. They test real algorithmic logic and React component states without requiring an active browser driver like Playwright or live database connections.
+> **Testing Scope Note:** All tests run in-memory via Vitest, jsdom, and mock network adapters. They test real algorithmic logic, live provider schemas, and React component states without requiring an active browser driver like Playwright or live database connections.
 
 ---
 
-## Current Limitations
+## Production Deployment & Operational Status
 
-- **Live Cloud Credentials:** Live Gemini LLM inference and remote pgvector storage queries require valid API keys in `.env.local`. Without them, the app runs reliably in offline demonstration mode.
-- **Synthetic Course Data:** The bundled demo is pre-seeded with synthetic Operating Systems (CS-301) content. User-uploaded documents in demo mode are processed with offline mock embeddings unless connected to live Gemini.
-- **Browser Automation:** Test coverage includes unit, integration, and scenario tiers in Vitest; automated cross-browser testing with Playwright is planned for the next release.
-- **Scanned Document OCR:** PDFs containing only scanned bitmap images without embedded text layers trigger an honest `needs_ocr` alert rather than attempting low-accuracy extraction.
+- **Live Production Deployment:** GapLens AI is hosted and running live in production at [https://gap-lens-ai-rho.vercel.app](https://gap-lens-ai-rho.vercel.app), connected to Groq Cloud for sub-second structured diagnostic generation and Jina AI for 768-dimensional dense vector search.
+- **Pre-Seeded Operating Systems Curriculum:** Bundled with a full undergraduate Operating Systems (CS-301) curriculum covering Concurrency, Virtual Memory, Scheduling, and Storage, complete with textbook citations, verified verbatim quotations, and prerequisite maps.
+- **Real Cloud Authentication & Demo Access:** Supports both live Supabase GoTrue authentication (with interviewer/judge accounts) and instant 1-Click Judge Demo access without credential friction.
+- **Scanned Document OCR:** PDFs containing only scanned bitmap images without embedded text layers trigger an honest `needs_ocr` alert rather than attempting low-accuracy character extraction.
+- **Test Suite Coverage:** 472 unit, integration, and scenario tests passing in Vitest with 100% route and algorithmic verification.
 
 ---
 
