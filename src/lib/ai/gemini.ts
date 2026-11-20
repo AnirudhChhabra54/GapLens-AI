@@ -1,15 +1,19 @@
 // ==============================================================================
-// GapLens AI — Google Gemini AI SDK Wrapper
-// Embedding generation (gemini-embedding-001, 768d unit vectors)
-// Reasoning and Structured Output (gemini-3.8-flash / gemini-1.5-flash with Zod)
-// Distinguishes genuine API calls from deterministic offline mock mode via `isMock: boolean`
+// GapLens AI — Unified Multi-Provider AI Facade
+// Seamlessly routes between:
+// - Groq API (openai/gpt-oss-120b) for structured generation & reasoning
+// - Jina AI API (jina-embeddings-v5-text-nano, 768d) for dense embeddings
+// - Google Gemini API fallback
+// - Deterministic offline mock mode when unconfigured
 // ==============================================================================
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { z } from "zod";
+import { isGroqLive, generateGroqStructured, getGroqModel } from "./groq";
+import { isJinaLive, embedBatchJina, embedTextJina, getJinaModel } from "./jina";
 
-export const EMBEDDING_MODEL_NAME = "gemini-embedding-001";
-export const REASONING_MODEL_NAME = "gemini-3.8-flash";
+export const EMBEDDING_MODEL_NAME = isJinaLive() ? getJinaModel() : "gemini-embedding-001";
+export const REASONING_MODEL_NAME = isGroqLive() ? getGroqModel() : "gemini-3.8-flash";
 export const TARGET_EMBEDDING_DIMENSIONS = 768;
 
 /**
@@ -28,6 +32,20 @@ export function getGeminiApiKey(): string | null {
  */
 export function isGeminiLive(): boolean {
   return getGeminiApiKey() !== null;
+}
+
+/**
+ * Returns true if any genuine LLM generation provider is active (Groq or Gemini).
+ */
+export function isLLMLive(): boolean {
+  return isGroqLive() || isGeminiLive();
+}
+
+/**
+ * Returns true if any genuine embedding provider is active (Jina or Gemini).
+ */
+export function isEmbeddingLive(): boolean {
+  return isJinaLive() || isGeminiLive();
 }
 
 /**
@@ -55,7 +73,7 @@ export function generateDeterministic768dEmbedding(text: string): number[] {
     }
   }
 
-  // Base deterministic pseudorandom variation
+  // Base deterministic variation
   let baseHash = 0;
   for (let i = 0; i < text.length; i++) {
     baseHash = (baseHash << 5) - baseHash + text.charCodeAt(i);
@@ -104,16 +122,26 @@ export interface EmbedResult {
 
 /**
  * Generates an embedding for a single text input.
- * If live credentials exist, calls the Google Gemini API.
- * Otherwise, generates a deterministic 768d unit vector flagged with `isMock: true`.
+ * Priority: Jina AI -> Gemini API -> Deterministic Mock.
  */
-export async function embedText(text: string): Promise<EmbedResult> {
-  const apiKey = getGeminiApiKey();
+export async function embedText(
+  text: string,
+  task: "retrieval.passage" | "retrieval.query" | "text-matching" = "retrieval.passage"
+): Promise<EmbedResult> {
+  if (isJinaLive()) {
+    const result = await embedTextJina(text, task);
+    return {
+      embedding: result.embedding,
+      dimensions: result.dimensions,
+      model: result.model,
+      isMock: result.isMock,
+    };
+  }
 
+  const apiKey = getGeminiApiKey();
   if (apiKey) {
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
-      // Attempt embedding with text-embedding-004 or gemini-embedding-001
       const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
       const result = await model.embedContent(text);
       if (result.embedding?.values && result.embedding.values.length > 0) {
@@ -121,13 +149,13 @@ export async function embedText(text: string): Promise<EmbedResult> {
         return {
           embedding: normalized,
           dimensions: TARGET_EMBEDDING_DIMENSIONS,
-          model: EMBEDDING_MODEL_NAME,
+          model: "gemini-embedding-001",
           isMock: false,
         };
       }
     } catch (error) {
       console.warn(
-        `[Gemini Embed] Live API call failed, falling back to deterministic mock vector:`,
+        `[Gemini Embed] Live call failed, falling back to mock:`,
         error instanceof Error ? error.message : error
       );
     }
@@ -138,34 +166,66 @@ export async function embedText(text: string): Promise<EmbedResult> {
   return {
     embedding: mockVector,
     dimensions: TARGET_EMBEDDING_DIMENSIONS,
-    model: EMBEDDING_MODEL_NAME,
+    model: "gemini-embedding-001",
     isMock: true,
   };
 }
 
 /**
  * Generates embeddings for a batch of text chunks.
+ * Priority: Jina AI -> Gemini API -> Deterministic Mock.
  */
-export async function embedBatch(texts: string[]): Promise<EmbedResult[]> {
-  return Promise.all(texts.map((t) => embedText(t)));
+export async function embedBatch(
+  texts: string[],
+  task: "retrieval.passage" | "retrieval.query" | "text-matching" = "retrieval.passage"
+): Promise<EmbedResult[]> {
+  if (isJinaLive()) {
+    const results = await embedBatchJina(texts, task);
+    return results.map((r) => ({
+      embedding: r.embedding,
+      dimensions: r.dimensions,
+      model: r.model,
+      isMock: r.isMock,
+    }));
+  }
+
+  return Promise.all(texts.map((t) => embedText(t, task)));
 }
 
 /**
  * Generates structured JSON output validated against a Zod schema.
+ * Priority: Groq API (openai/gpt-oss-120b) -> Gemini API -> Mock Fallback.
  */
 export async function generateStructured<T>(params: {
   prompt: string;
-  schema: z.ZodType<T>;
+  schema: z.ZodType<T, any, any>;
   systemInstruction?: string;
   mockFallback?: () => T;
-}): Promise<{ data: T; isMock: boolean }> {
-  const apiKey = getGeminiApiKey();
+}): Promise<{ data: T; isMock: boolean; model?: string }> {
+  // 1. Try Groq (Primary high-performance LLM)
+  if (isGroqLive()) {
+    try {
+      const groqRes = await generateGroqStructured(params);
+      return {
+        data: groqRes.data,
+        isMock: groqRes.isMock,
+        model: groqRes.model,
+      };
+    } catch (err) {
+      console.warn(
+        `[Groq Structured Gen] Call failed, attempting secondary provider fallback:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
 
+  // 2. Try Gemini (Secondary LLM fallback)
+  const apiKey = getGeminiApiKey();
   if (apiKey) {
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({
-        model: "gemini-1.5-flash", // stable flash model
+        model: "gemini-1.5-flash",
         generationConfig: {
           responseMimeType: "application/json",
           temperature: 0.2,
@@ -181,21 +241,24 @@ export async function generateStructured<T>(params: {
       return {
         data: validated,
         isMock: false,
+        model: "gemini-1.5-flash",
       };
     } catch (error) {
       console.warn(
-        `[Gemini Structured Gen] Live API generation failed, falling back to mock generator:`,
+        `[Gemini Structured Gen] Live API generation failed, falling back to mock:`,
         error instanceof Error ? error.message : error
       );
     }
   }
 
+  // 3. Deterministic mock fallback
   if (params.mockFallback) {
     return {
       data: params.mockFallback(),
       isMock: true,
+      model: "offline-mock",
     };
   }
 
-  throw new Error("No live Gemini API key provided and no mockFallback provided for structured generation.");
+  throw new Error("No live LLM provider available and no mockFallback provided for structured generation.");
 }

@@ -30,6 +30,7 @@ import type { RevisionPlanOverview, TopicPriorityFactors } from "@/types/planner
 import { rankTopicsByPriority } from "@/lib/algorithms/priority";
 import { generateRevisionPlan, updatePlanAfterRetest } from "@/lib/algorithms/scheduler";
 import { mergeAssessmentIntoGapReport } from "@/lib/algorithms/gap-report-update";
+import { supabase } from "@/lib/supabase/client";
 
 interface WorkspaceContextType {
   profile: ProfileRow;
@@ -277,19 +278,23 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const loginCustom = (email: string, name?: string) => {
+    const isInterviewer =
+      email.toLowerCase().includes("interview") ||
+      email.toLowerCase().includes("judge") ||
+      email.toLowerCase().includes("gaplens");
     const customProfile: ProfileRow = {
-      id: "custom-" + Date.now(),
+      id: isInterviewer ? "00000000-0000-0000-0000-000000000002" : "custom-" + Date.now(),
       email,
-      full_name: name || email.split("@")[0],
+      full_name: name || (isInterviewer ? "Interviewer / Hackathon Judge" : email.split("@")[0]),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
     const customWorkspace: WorkspaceRow = {
-      id: "ws-" + Date.now(),
+      id: DEMO_WORKSPACE.id,
       user_id: customProfile.id,
-      title: "My Course Workspace",
-      description: "Custom revision workspace",
-      exam_date: "2026-12-15",
+      title: DEMO_WORKSPACE.title,
+      description: DEMO_WORKSPACE.description,
+      exam_date: DEMO_WORKSPACE.exam_date,
       daily_study_minutes: 60,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -306,7 +311,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Ignore network errors
+    }
     setIsLoggedIn(false);
     saveState({ isLoggedIn: false });
   };

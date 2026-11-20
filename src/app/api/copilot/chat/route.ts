@@ -56,7 +56,7 @@ export async function POST(request: Request) {
     }
 
     try {
-      const { embedding } = await embedText(message);
+      const { embedding } = await embedText(message, "retrieval.query");
       const retrieval = await hybridSearch({
         workspaceId,
         queryText: message,

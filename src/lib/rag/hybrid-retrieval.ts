@@ -9,6 +9,8 @@ import type { DocumentType, HybridSearchResult, DocumentChunkRow } from "@/types
 import type { HybridSearchQuery } from "@/types/rag";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { DEMO_CHUNKS, DEMO_DOCUMENTS } from "@/lib/demo/os-cs301-fixture";
+import { isJinaLive } from "@/lib/ai/jina";
+import JINA_DEMO_EMBEDDINGS from "@/lib/demo/jina-embeddings.json";
 
 export const DEFAULT_RRF_K = 60;
 export const DEFAULT_MATCH_COUNT = 10;
@@ -126,10 +128,16 @@ export function inMemoryRRFSearch(
 
   // 1. Vector scoring and ranking
   const vectorRanked = filteredChunks
-    .map((chunk) => ({
-      chunk,
-      similarity: cosineSimilarity(query.queryEmbedding, chunk.embedding),
-    }))
+    .map((chunk) => {
+      const chunkEmbedding =
+        isJinaLive() && (JINA_DEMO_EMBEDDINGS as Record<string, number[]>)[chunk.id]
+          ? (JINA_DEMO_EMBEDDINGS as Record<string, number[]>)[chunk.id]
+          : chunk.embedding;
+      return {
+        chunk,
+        similarity: cosineSimilarity(query.queryEmbedding, chunkEmbedding),
+      };
+    })
     .sort((a, b) => b.similarity - a.similarity);
 
   // 2. Keyword/FTS scoring and ranking

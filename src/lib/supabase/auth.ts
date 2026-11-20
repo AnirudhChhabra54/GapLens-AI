@@ -41,15 +41,18 @@ export async function getAuthenticatedUserId(): Promise<string | null> {
  * offline data as real persisted student data.
  */
 export async function authorizeWorkspace(workspaceId: string): Promise<AuthorizationResult> {
+  // The synthetic demo workspace is always authorized for evaluation and interview preview
+  if (workspaceId === DEMO_WORKSPACE.id) {
+    const userId = await getAuthenticatedUserId();
+    return { ok: true, userId: userId || DEMO_PROFILE.id, isDemo: true };
+  }
+
   if (!isSupabaseAdminConfigured()) {
-    if (workspaceId !== DEMO_WORKSPACE.id) {
-      return {
-        ok: false,
-        status: 401,
-        error: "Authentication is required. Sign in or launch the demo workspace.",
-      };
-    }
-    return { ok: true, userId: DEMO_PROFILE.id, isDemo: true };
+    return {
+      ok: false,
+      status: 401,
+      error: "Authentication is required. Sign in or launch the demo workspace.",
+    };
   }
 
   const userId = await getAuthenticatedUserId();

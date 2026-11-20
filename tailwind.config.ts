@@ -10,36 +10,83 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: "#0B0F19",
-        surface: "#111827",
-        "surface-raised": "#1F2937",
-        border: "#1E293B",
+        background: "#080D0C",
+        surface: {
+          DEFAULT: "#0D1512",
+          elevated: "#121D18",
+          interactive: "#17231D",
+          hover: "#1D2C24",
+        },
         primary: {
-          DEFAULT: "#2563EB", // Electric blue
-          foreground: "#FFFFFF",
-          hover: "#1D4ED8",
+          DEFAULT: "#00D6A0",
+          foreground: "#080D0C",
+          hover: "#00B887",
         },
         accent: {
-          DEFAULT: "#14B8A6", // Teal
-          foreground: "#0F172A",
-          hover: "#0D9488",
+          DEFAULT: "#00D6A0",
+          mint: "#B7FFE8",
+          foreground: "#080D0C",
+          hover: "#00B887",
+        },
+        text: {
+          main: "#F1F7F4",
+          secondary: "#A0ADA6",
+          muted: "#6D7C74",
+        },
+        border: {
+          DEFAULT: "rgba(183, 255, 232, 0.08)",
+          elevated: "rgba(183, 255, 232, 0.16)",
+          active: "rgba(0, 214, 160, 0.40)",
         },
         mastery: {
-          weak: "#EF4444", // Red (<55%)
-          medium: "#F59E0B", // Amber (55-79%)
-          strong: "#10B981", // Emerald (>=80%)
-          unassessed: "#64748B", // Slate
+          weak: "#F87171",
+          medium: "#FBBF24",
+          strong: "#00D6A0",
+          unassessed: "#6D7C74",
         },
         blindspot: {
-          badge: "#DC2626",
-          bg: "#450A0A",
-          border: "#991B1B",
+          badge: "#F87171",
+          bg: "rgba(248, 113, 113, 0.08)",
+          border: "rgba(248, 113, 113, 0.25)",
         },
       },
+      fontFamily: {
+        sans: [
+          "-apple-system",
+          "BlinkMacSystemFont",
+          '"Segoe UI"',
+          "Roboto",
+          '"Helvetica Neue"',
+          "Arial",
+          "sans-serif",
+        ],
+        mono: [
+          '"SF Mono"',
+          "Menlo",
+          "Monaco",
+          "Consolas",
+          '"Liberation Mono"',
+          '"Courier New"',
+          "monospace",
+        ],
+        serif: [
+          '"New York"',
+          "Georgia",
+          "Cambria",
+          '"Times New Roman"',
+          "serif",
+        ],
+      },
       borderRadius: {
-        lg: "0.5rem",
-        md: "0.375rem",
-        sm: "0.25rem",
+        xl: "0.75rem",
+        "2xl": "1rem",
+        "3xl": "1.5rem",
+        full: "9999px",
+      },
+      boxShadow: {
+        emerald: "0 0 24px -4px rgba(0, 214, 160, 0.25)",
+        "emerald-lg": "0 0 40px -6px rgba(0, 214, 160, 0.35)",
+        subtle: "0 4px 20px -2px rgba(0, 0, 0, 0.5)",
       },
     },
   },

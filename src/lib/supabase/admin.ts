@@ -13,10 +13,12 @@ let adminClientInstance: SupabaseClient<Database> | null = null;
  * Checks whether valid Supabase admin credentials exist in the runtime environment.
  */
 export function isSupabaseAdminConfigured(): boolean {
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
   return Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL &&
-    process.env.SUPABASE_SERVICE_ROLE_KEY &&
-    !process.env.SUPABASE_SERVICE_ROLE_KEY.includes("your-service-role-key")
+    serviceRoleKey &&
+    !serviceRoleKey.includes("your-service-role-key") &&
+    !serviceRoleKey.includes("placeholder")
   );
 }
 
@@ -30,11 +32,11 @@ export function getSupabaseAdmin(): SupabaseClient<Database> {
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
 
   if (!supabaseUrl || !serviceRoleKey) {
     console.warn(
-      "[Supabase Admin] WARNING: SUPABASE_SERVICE_ROLE_KEY or NEXT_PUBLIC_SUPABASE_URL is missing. " +
+      "[Supabase Admin] WARNING: SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SECRET_KEY) or NEXT_PUBLIC_SUPABASE_URL is missing. " +
       "Database operations requiring elevated privileges will run in mock/offline mode."
     );
   }

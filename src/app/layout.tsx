@@ -16,23 +16,23 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className="min-h-screen bg-[#0B0F19] text-[#F8FAFC] antialiased selection:bg-cyan-500 selection:text-slate-950">
+      <body className="min-h-screen bg-[#080D0C] text-[#F1F7F4] antialiased selection:bg-[#00D6A0] selection:text-[#080D0C]">
         <WorkspaceProvider>
           <div className="flex min-h-screen flex-col">
             <Navigation />
             <main className="flex-1">{children}</main>
-            <footer className="border-t border-slate-800/80 bg-[#0A0F1D]/80 py-6 text-center text-xs text-slate-500">
+            <footer className="border-t border-[rgba(183,255,232,0.08)] bg-[#080D0C]/90 py-6 text-center text-xs text-[#6D7C74]">
               <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="font-bold text-slate-300">GapLens AI</span>
-                  <span>—</span>
-                  <span>See the gaps. Master what matters.</span>
+                  <span className="font-semibold text-[#F1F7F4] tracking-tight">GapLens AI</span>
+                  <span className="text-[#6D7C74]">—</span>
+                  <span className="text-[#A0ADA6]">See the gaps. Master what matters.</span>
                 </div>
-                <div className="flex items-center gap-4 text-[11px] text-slate-400">
-                  <span className="rounded bg-slate-900 border border-slate-800 px-2 py-0.5 font-mono text-cyan-400">
+                <div className="flex items-center gap-4 text-[11px] text-[#A0ADA6]">
+                  <span className="rounded-full bg-[#0D1512] border border-[rgba(183,255,232,0.12)] px-2.5 py-0.5 font-mono text-[#00D6A0]">
                     Pre-seeded OS CS-301 Workspace
                   </span>
-                  <span>Autonomous Evaluation Ready</span>
+                  <span className="font-mono text-[#6D7C74]">Evidence-Grounded Intelligence</span>
                 </div>
               </div>
             </footer>

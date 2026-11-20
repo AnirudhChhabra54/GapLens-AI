@@ -18,6 +18,7 @@ import {
   Bot,
   User,
   ChevronRight,
+  ShieldAlert,
 } from "lucide-react";
 import { CitationBadge } from "@/components/citation-badge";
 import { useWorkspace } from "@/components/workspace-context";
@@ -68,7 +69,7 @@ export function CopilotDrawer({
       id: "initial-msg",
       role: "assistant",
       content:
-        "Hello! I am your GapLens Study Copilot, strictly grounded in your Operating Systems CS-301 syllabus and Silberschatz OS Concepts notes. Ask me any conceptual question or clarification on your weak topics.",
+        "Hello! I am your GapLens Study Copilot, grounded strictly in your Operating Systems (CS-301) syllabus and Silberschatz OS Concepts notes. Ask me any conceptual question or ask for clarification on your diagnosed blind spots.",
       isGrounded: true,
     },
   ]);
@@ -100,7 +101,6 @@ export function CopilotDrawer({
     setLoading(true);
 
     try {
-      // Attempt API call to /api/copilot/chat
       const res = await fetch("/api/copilot/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -139,7 +139,6 @@ export function CopilotDrawer({
       let assistantMsg: Message;
 
       if (isDemo) {
-        // Offline demo fallback: local algorithmic Copilot over synthetic chunks.
         const fallbackResult: CopilotChatResponse = await processCopilotChat({
           message: messageText,
           chunks: DEMO_CHUNKS,
@@ -185,24 +184,24 @@ export function CopilotDrawer({
   return (
     <div
       className={cn(
-        "flex flex-col h-full rounded-2xl border border-slate-800 bg-[#0A0F1D]/95 backdrop-blur-xl shadow-2xl overflow-hidden",
+        "flex flex-col h-full rounded-2xl border border-[rgba(183,255,232,0.12)] bg-[#080D0C]/98 backdrop-blur-2xl shadow-2xl overflow-hidden",
         className
       )}
     >
       {/* Drawer Header */}
-      <div className="flex items-center justify-between border-b border-slate-800/80 px-4 py-3 bg-slate-900/60">
-        <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 p-0.5 flex items-center justify-center">
-            <Sparkles className="h-4 w-4 text-slate-950" />
+      <div className="flex items-center justify-between border-b border-[rgba(183,255,232,0.08)] px-5 py-4 bg-[#0D1512]">
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-8 rounded-xl bg-[#121D18] border border-[rgba(0,214,160,0.3)] flex items-center justify-center text-[#00D6A0]">
+            <Sparkles className="h-4 w-4" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold text-slate-100">Study Copilot</h3>
-              <span className="rounded-full bg-cyan-950 border border-cyan-800/60 px-2 py-0.2 text-[10px] font-mono text-cyan-300">
+              <h3 className="text-sm font-bold text-[#F1F7F4] tracking-tight">Study Copilot</h3>
+              <span className="rounded-full bg-[#121D18] border border-[rgba(0,214,160,0.3)] px-2 py-0.5 text-[10px] font-mono text-[#00D6A0]">
                 Source-Locked
               </span>
             </div>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-[#A0ADA6]">
               Grounded strictly in Silberschatz OS Concepts
             </p>
           </div>
@@ -210,7 +209,7 @@ export function CopilotDrawer({
 
         <button
           onClick={onClose}
-          className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+          className="p-1.5 rounded-lg text-[#6D7C74] hover:text-[#F1F7F4] hover:bg-[#121D18] transition"
         >
           <X className="h-4 w-4" />
         </button>
@@ -228,10 +227,10 @@ export function CopilotDrawer({
           >
             <div
               className={cn(
-                "h-7 w-7 rounded-full flex items-center justify-center shrink-0 text-[11px]",
+                "h-7 w-7 rounded-full flex items-center justify-center shrink-0 text-[11px] font-mono",
                 m.role === "user"
-                  ? "bg-cyan-600 text-white"
-                  : "bg-slate-800 text-cyan-400 border border-slate-700"
+                  ? "bg-[#00D6A0] text-[#080D0C] font-bold"
+                  : "bg-[#121D18] text-[#00D6A0] border border-[rgba(183,255,232,0.12)]"
               )}
             >
               {m.role === "user" ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
@@ -240,16 +239,16 @@ export function CopilotDrawer({
             <div className="space-y-2">
               <div
                 className={cn(
-                  "p-3.5 rounded-2xl leading-relaxed",
+                  "p-3.5 rounded-2xl leading-relaxed text-xs",
                   m.role === "user"
-                    ? "bg-cyan-600 text-white rounded-tr-none"
+                    ? "bg-[#17231D] border border-[rgba(183,255,232,0.14)] text-[#F1F7F4] rounded-tr-none"
                     : m.outOfScope
-                    ? "bg-amber-950/40 border border-amber-800/80 text-amber-200 rounded-tl-none"
-                    : "bg-slate-900 border border-slate-800 text-slate-200 rounded-tl-none"
+                    ? "bg-[#121D18] border border-[rgba(251,191,36,0.25)] text-[#FBBF24] rounded-tl-none"
+                    : "bg-[#0D1512] border border-[rgba(183,255,232,0.08)] text-[#F1F7F4] rounded-tl-none"
                 )}
               >
                 {m.outOfScope && (
-                  <div className="flex items-center gap-1.5 text-amber-400 font-semibold mb-1 text-[11px]">
+                  <div className="flex items-center gap-1.5 text-[#FBBF24] font-semibold mb-1 text-[11px] font-mono">
                     <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                     <span>Out-of-Scope Query Refusal</span>
                   </div>
@@ -276,8 +275,8 @@ export function CopilotDrawer({
         ))}
 
         {loading && (
-          <div className="flex items-center gap-2 text-slate-400 text-xs italic">
-            <Bot className="h-4 w-4 animate-spin text-cyan-400" />
+          <div className="flex items-center gap-2 text-[#A0ADA6] text-xs font-mono italic">
+            <Bot className="h-4 w-4 animate-spin text-[#00D6A0]" />
             <span>Retrieving syllabus chunks and formulating grounded answer...</span>
           </div>
         )}
@@ -286,14 +285,16 @@ export function CopilotDrawer({
       </div>
 
       {/* Suggested Quick Chips */}
-      <div className="px-4 py-2 bg-slate-950/60 border-t border-slate-800/60">
-        <p className="text-[10px] font-medium text-slate-400 mb-1.5">Suggested Inquiries:</p>
+      <div className="px-4 py-2.5 bg-[#0D1512] border-t border-[rgba(183,255,232,0.08)]">
+        <p className="text-[10px] font-mono uppercase tracking-wider text-[#6D7C74] mb-1.5">
+          Suggested Inquiries:
+        </p>
         <div className="flex flex-wrap gap-1.5">
           {DEFAULT_SUGGESTIONS.map((chip, idx) => (
             <button
               key={idx}
               onClick={() => handleSend(chip)}
-              className="rounded-full bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-cyan-700/60 text-slate-300 hover:text-cyan-300 px-2.5 py-1 text-[11px] transition text-left"
+              className="rounded-full bg-[#121D18] hover:bg-[#17231D] border border-[rgba(183,255,232,0.08)] hover:border-[#00D6A0]/40 text-[#A0ADA6] hover:text-[#F1F7F4] px-2.5 py-1 text-[11px] transition text-left"
             >
               {chip}
             </button>
@@ -302,7 +303,7 @@ export function CopilotDrawer({
       </div>
 
       {/* Input bar */}
-      <div className="p-3 bg-slate-900/90 border-t border-slate-800">
+      <div className="p-3 bg-[#0D1512] border-t border-[rgba(183,255,232,0.08)]">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -315,17 +316,17 @@ export function CopilotDrawer({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask Copilot about any OS topic..."
-            className="flex-1 rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+            className="flex-1 rounded-xl border border-[rgba(183,255,232,0.10)] bg-[#080D0C] px-3.5 py-2.5 text-xs text-[#F1F7F4] placeholder-[#6D7C74] focus:outline-none focus:border-[#00D6A0] focus:ring-1 focus:ring-[#00D6A0]"
           />
           <button
             type="submit"
             disabled={!input.trim() || loading}
-            className="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 p-2.5 text-white hover:from-cyan-400 hover:to-blue-500 disabled:opacity-40 transition shrink-0"
+            className="rounded-xl bg-gradient-to-r from-[#00D6A0] to-[#00B887] p-2.5 text-[#080D0C] font-semibold hover:shadow-[0_0_15px_rgba(0,214,160,0.3)] disabled:opacity-30 transition shrink-0"
           >
             <Send className="h-4 w-4" />
           </button>
         </form>
-        <p className="text-[10px] text-slate-500 text-center mt-1.5">
+        <p className="text-[10px] font-mono text-[#6D7C74] text-center mt-1.5">
           Protected by strict prompt-injection defense & deterministic citation grounding.
         </p>
       </div>

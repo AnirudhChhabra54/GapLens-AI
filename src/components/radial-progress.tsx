@@ -21,7 +21,7 @@ interface RadialProgressProps {
 export function RadialProgress({
   value,
   size = 140,
-  strokeWidth = 12,
+  strokeWidth = 10,
   label,
   sublabel,
   className,
@@ -33,13 +33,13 @@ export function RadialProgress({
   const strokeDashoffset = circumference - (clampedValue / 100) * circumference;
 
   // Color selection based on readiness
-  let strokeColor = "url(#cyanElectricGradient)";
+  let strokeColor = "url(#emeraldMintGradient)";
   if (status === "weak" || (status === "default" && clampedValue < 55)) {
     strokeColor = "url(#weakGradient)";
   } else if (status === "medium" || (status === "default" && clampedValue < 80)) {
     strokeColor = "url(#mediumGradient)";
   } else if (status === "strong" || (status === "default" && clampedValue >= 80)) {
-    strokeColor = "url(#strongGradient)";
+    strokeColor = "url(#emeraldMintGradient)";
   }
 
   return (
@@ -47,21 +47,17 @@ export function RadialProgress({
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} className="rotate-[-90deg]">
           <defs>
-            <linearGradient id="cyanElectricGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#06B6D4" />
-              <stop offset="100%" stopColor="#3B82F6" />
-            </linearGradient>
-            <linearGradient id="strongGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#10B981" />
-              <stop offset="100%" stopColor="#14B8A6" />
+            <linearGradient id="emeraldMintGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#00D6A0" />
+              <stop offset="100%" stopColor="#B7FFE8" />
             </linearGradient>
             <linearGradient id="mediumGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#F59E0B" />
-              <stop offset="100%" stopColor="#EAB308" />
+              <stop offset="0%" stopColor="#FBBF24" />
+              <stop offset="100%" stopColor="#F59E0B" />
             </linearGradient>
             <linearGradient id="weakGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#EF4444" />
-              <stop offset="100%" stopColor="#F43F5E" />
+              <stop offset="0%" stopColor="#F87171" />
+              <stop offset="100%" stopColor="#EF4444" />
             </linearGradient>
           </defs>
 
@@ -70,9 +66,9 @@ export function RadialProgress({
             cx={size / 2}
             cy={size / 2}
             r={radius}
-            stroke="currentColor"
+            stroke="#121D18"
             strokeWidth={strokeWidth}
-            className="text-slate-800/80 fill-none"
+            className="fill-none"
           />
 
           {/* Animated progress ring */}
@@ -91,22 +87,21 @@ export function RadialProgress({
 
         {/* Center label */}
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-          <span className="text-3xl font-extrabold tracking-tight text-slate-100">
+          <span className="text-3xl font-extrabold tracking-tight text-[#F1F7F4] font-mono">
             {Math.round(clampedValue)}%
           </span>
           {label && (
-            <span className="text-[11px] font-medium tracking-wide uppercase text-cyan-400">
+            <span className="text-[10px] font-mono uppercase tracking-wider text-[#A0ADA6]">
               {label}
+            </span>
+          )}
+          {sublabel && (
+            <span className="text-[9px] text-[#6D7C74] font-mono">
+              {sublabel}
             </span>
           )}
         </div>
       </div>
-
-      {sublabel && (
-        <span className="mt-2 text-xs text-slate-400 text-center font-medium max-w-[160px]">
-          {sublabel}
-        </span>
-      )}
     </div>
   );
 }
