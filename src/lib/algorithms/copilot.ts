@@ -118,7 +118,7 @@ export interface CopilotChatParams {
  * 4. Attaches verified authentic citations.
  */
 export async function processCopilotChat(params: CopilotChatParams): Promise<CopilotChatResponse> {
-  const { message, chunks, topicTitle } = params;
+  const { message, chunks, topicTitle, history } = params;
 
   // 1. Prompt Injection Defense
   const injectionCheck = detectPromptInjection(message);
@@ -190,7 +190,12 @@ CRITICAL MANDATE:
     )
     .join("\n\n---\n\n");
 
-  const prompt = `Course Material Chunks:\n"""\n${contextText}\n"""\n\nStudent Question: "${message}"`;
+  const historyText = (history || [])
+    .slice(-6)
+    .map((entry) => `${entry.role}: ${entry.content}`)
+    .join("\n");
+
+  const prompt = `${historyText ? `Conversation so far:\n${historyText}\n\n` : ""}Course Material Chunks:\n"""\n${contextText}\n"""\n\nStudent Question: "${message}"`;
 
   // 3a. Try Groq (Primary high-speed LLM)
   if (isGroqLive()) {
@@ -221,8 +226,8 @@ CRITICAL MANDATE:
       const citation: PinnedCitation = {
         chunkId: primaryMatch.id,
         documentId: primaryMatch.document_id,
-        documentName: (primaryMatch as any).document_title || "Silberschatz OS Concepts",
-        docType: "material",
+        documentName: (primaryMatch as any).document_name || "Course material",
+        docType: ((primaryMatch as any).doc_type || "material") as any,
         pageStart: (primaryMatch as any).page_start || (primaryMatch as any).page_number || 1,
         pageEnd: (primaryMatch as any).page_end || (primaryMatch as any).page_number || 1,
         sectionHeading: (primaryMatch as any).section_heading || topicTitle || null,
@@ -270,8 +275,8 @@ CRITICAL MANDATE:
       const citation: PinnedCitation = {
         chunkId: primaryMatch.id,
         documentId: primaryMatch.document_id,
-        documentName: (primaryMatch as any).document_title || "Silberschatz OS Concepts",
-        docType: "material",
+        documentName: (primaryMatch as any).document_name || "Course material",
+        docType: ((primaryMatch as any).doc_type || "material") as any,
         pageStart: (primaryMatch as any).page_start || (primaryMatch as any).page_number || 1,
         pageEnd: (primaryMatch as any).page_end || (primaryMatch as any).page_number || 1,
         sectionHeading: (primaryMatch as any).section_heading || topicTitle || null,
@@ -305,8 +310,8 @@ CRITICAL MANDATE:
   const citation: PinnedCitation = {
     chunkId: primaryMatch.id,
     documentId: primaryMatch.document_id,
-    documentName: (primaryMatch as any).document_title || "Silberschatz OS Concepts",
-    docType: "material",
+    documentName: (primaryMatch as any).document_name || "Course material",
+    docType: ((primaryMatch as any).doc_type || "material") as any,
     pageStart: (primaryMatch as any).page_start || (primaryMatch as any).page_number || 1,
     pageEnd: (primaryMatch as any).page_end || (primaryMatch as any).page_number || 1,
     sectionHeading: (primaryMatch as any).section_heading || topicTitle || null,
@@ -314,7 +319,7 @@ CRITICAL MANDATE:
     isQuoteVerified: quoteCheck.verified,
   };
 
-  const syntheticAnswer = `Based on your course materials in ${(primaryMatch as any).document_title || "the lecture notes"} (${(primaryMatch as any).section_heading || "Core Concepts"}), ${keySentence}.`;
+  const syntheticAnswer = `Based on your course materials in ${(primaryMatch as any).document_name || "the lecture notes"} (${(primaryMatch as any).section_heading || "Core Concepts"}), ${keySentence}.`;
 
   return {
     answer: syntheticAnswer,

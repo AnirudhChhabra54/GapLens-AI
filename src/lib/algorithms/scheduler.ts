@@ -122,7 +122,7 @@ export function formatISODate(date: Date): string {
  */
 export function generateRevisionPlan(params: PlanGenerationParams): RevisionPlanOverview {
   const {
-    planId = `plan-${Date.now()}`,
+    planId = crypto.randomUUID(),
     workspaceId,
     version = 1,
     prioritizedTopics,
@@ -207,17 +207,6 @@ export function generateRevisionPlan(params: PlanGenerationParams): RevisionPlan
   let totalAllocatedAcrossDays = 0;
 
   // Ensure new pending task IDs are strictly collision-free with existingTasks
-  let maxCounter = 0;
-  for (const task of existingTasks) {
-    const match = task.id.match(/-(\d+)$/);
-    if (match) {
-      const num = parseInt(match[1], 10);
-      if (!isNaN(num) && num > maxCounter) {
-        maxCounter = num;
-      }
-    }
-  }
-  let taskIdCounter = maxCounter + 1;
   const existingIds = new Set(existingTasks.map((t) => t.id));
   const scheduledCandidateIndices = new Set<number>();
 
@@ -262,9 +251,7 @@ export function generateRevisionPlan(params: PlanGenerationParams): RevisionPlan
       if (dayAllocated + candidate.allocatedMinutes <= dailyMinutes) {
         let taskId: string;
         do {
-          taskId = version > 1
-            ? `task-${planId}-v${version}-${dayNum}-${taskIdCounter++}`
-            : `task-${planId}-${dayNum}-${taskIdCounter++}`;
+          taskId = crypto.randomUUID();
         } while (existingIds.has(taskId));
         existingIds.add(taskId);
 

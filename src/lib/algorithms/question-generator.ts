@@ -284,7 +284,7 @@ export function toSafeQuizQuestion(
   const isRow = "quiz_id" in q;
 
   return {
-    id: q.id || (isRow ? (q as QuizQuestionRow).id : "temp-question-id"),
+    id: q.id || (isRow ? (q as QuizQuestionRow).id : crypto.randomUUID()),
     topicId: isRow ? (q as QuizQuestionRow).topic_id : (q as GeneratedQuestionResult).topicId,
     topicTitle: topicTitle || "Diagnostic Topic",
     questionType: isRow ? (q as QuizQuestionRow).question_type : (q as GeneratedQuestionResult).questionType,

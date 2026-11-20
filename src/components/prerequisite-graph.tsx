@@ -1,14 +1,16 @@
 "use client";
 
 // ==============================================================================
-// GapLens AI — Interactive Topic Prerequisite DAG & Visual Flow
+// GapLens AI — Interactive Topic Prerequisite DAG & Dependency Map
 // Visualizes curriculum learning pathways, prerequisite blockers, and mastery states
+// Redesigned: Editorial light-first styling with warm borders and muted status badges
 // ==============================================================================
 
 import React, { useState } from "react";
-import { GitBranch, CheckCircle2, AlertTriangle, ArrowRight, BookOpen, Layers } from "lucide-react";
+import { GitBranch, AlertTriangle, ArrowRight, Layers, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TopicRow, TopicPrerequisiteRow } from "@/types/database";
+import { Card, StatusBadge } from "@/components/ui/design-system";
 
 interface PrerequisiteGraphProps {
   topics: TopicRow[];
@@ -28,7 +30,7 @@ export function PrerequisiteGraph({
   // Group topics by Unit/Module
   const unitsMap = new Map<string, TopicRow[]>();
   for (const t of topics) {
-    const unit = t.unit_module || "General Operating Systems";
+    const unit = t.unit_module || "Core Operating Systems";
     if (!unitsMap.has(unit)) {
       unitsMap.set(unit, []);
     }
@@ -58,38 +60,36 @@ export function PrerequisiteGraph({
   };
 
   return (
-    <div
-      className={cn(
-        "rounded-2xl border border-[rgba(183,255,232,0.10)] bg-[#0D1512] p-5 sm:p-6 shadow-xl space-y-6",
-        className
-      )}
-    >
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[rgba(183,255,232,0.08)] pb-4">
+    <Card className={cn("space-y-6", className)}>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-brandBorder pb-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-[#00D6A0]">
-              [ KNOWLEDGE GRAPH / PREREQUISITE DAG ]
+            <span className="text-[11px] font-mono uppercase tracking-wider text-accent font-semibold">
+              Curriculum Dependency Map
             </span>
           </div>
-          <h3 className="text-base font-bold text-[#F1F7F4] flex items-center gap-2">
-            <GitBranch className="h-4 w-4 text-[#00D6A0]" />
-            Curriculum Dependency Flow
+          <h3 className="text-base font-semibold text-brandText-primary flex items-center gap-2">
+            <GitBranch className="h-4 w-4 text-accent" />
+            <span>Topic Prerequisites & Learning Pathways</span>
           </h3>
-          <p className="text-xs text-[#A0ADA6] mt-0.5">
-            Interactive syllabus pathway. Click any node to inspect prerequisite dependencies and exam weights.
+          <p className="text-xs text-brandText-secondary mt-0.5">
+            Click any topic node to inspect foundational prerequisites and downstream unlocked concepts.
           </p>
         </div>
 
         {/* Legend */}
-        <div className="flex items-center gap-3 text-[11px] font-mono shrink-0">
-          <span className="flex items-center gap-1.5 text-[#00D6A0]">
-            <span className="h-2 w-2 rounded-full bg-[#00D6A0]" /> Strong (≥80%)
+        <div className="flex flex-wrap items-center gap-3 text-xs font-mono shrink-0">
+          <span className="flex items-center gap-1.5 text-accent">
+            <span className="h-2 w-2 rounded-full bg-accent" /> Strong (≥80%)
           </span>
-          <span className="flex items-center gap-1.5 text-[#FBBF24]">
-            <span className="h-2 w-2 rounded-full bg-[#FBBF24]" /> Medium (55–79%)
+          <span className="flex items-center gap-1.5 text-[#C27803]">
+            <span className="h-2 w-2 rounded-full bg-[#C27803]" /> Developing (55–79%)
           </span>
-          <span className="flex items-center gap-1.5 text-[#F87171]">
-            <span className="h-2 w-2 rounded-full bg-[#F87171]" /> Weak (&lt;55%)
+          <span className="flex items-center gap-1.5 text-[#B84A39]">
+            <span className="h-2 w-2 rounded-full bg-[#B84A39]" /> Needs work (&lt;55%)
+          </span>
+          <span className="flex items-center gap-1.5 text-brandText-muted">
+            <span className="h-2 w-2 rounded-full bg-brandBorder-strong" /> Not assessed
           </span>
         </div>
       </div>
@@ -99,15 +99,15 @@ export function PrerequisiteGraph({
         {units.map(([unitName, unitTopics]) => (
           <div
             key={unitName}
-            className="rounded-xl border border-[rgba(183,255,232,0.08)] bg-[#121D18] p-4 space-y-3 relative"
+            className="rounded-card border border-brandBorder bg-surface-subtle p-3.5 space-y-3"
           >
-            <div className="flex items-center justify-between pb-2 border-b border-[rgba(183,255,232,0.06)]">
-              <span className="text-xs font-semibold text-[#F1F7F4] flex items-center gap-1.5 truncate">
-                <Layers className="h-3.5 w-3.5 text-[#00D6A0] shrink-0" />
+            <div className="flex items-center justify-between pb-2 border-b border-brandBorder">
+              <span className="text-xs font-semibold text-brandText-primary flex items-center gap-1.5 truncate">
+                <Layers className="h-3.5 w-3.5 text-accent shrink-0" />
                 {unitName}
               </span>
-              <span className="rounded-full bg-[#0D1512] px-2 py-0.5 text-[10px] font-mono text-[#A0ADA6] border border-[rgba(183,255,232,0.08)]">
-                {unitTopics.length} topics
+              <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-mono text-brandText-muted border border-brandBorder">
+                {unitTopics.length}
               </span>
             </div>
 
@@ -117,53 +117,46 @@ export function PrerequisiteGraph({
                 const status = topic.classification || "unassessed";
                 const mastery = topic.current_mastery ?? 45;
 
-                let borderClass = "border-[rgba(183,255,232,0.08)] hover:border-[rgba(183,255,232,0.18)] bg-[#0D1512]";
-                let badgeClass = "bg-[#17231D] text-[#A0ADA6]";
-
-                if (status === "strong") {
-                  borderClass = isSelected
-                    ? "border-[#00D6A0] bg-[#121D18] shadow-[0_0_15px_rgba(0,214,160,0.15)]"
-                    : "border-[rgba(0,214,160,0.25)] hover:border-[#00D6A0] bg-[#0D1512]";
-                  badgeClass = "bg-[#121D18] text-[#00D6A0] border border-[rgba(0,214,160,0.3)]";
-                } else if (status === "medium") {
-                  borderClass = isSelected
-                    ? "border-[#FBBF24] bg-[#121D18] shadow-[0_0_15px_rgba(251,191,36,0.15)]"
-                    : "border-[rgba(251,191,36,0.25)] hover:border-[#FBBF24] bg-[#0D1512]";
-                  badgeClass = "bg-[#121D18] text-[#FBBF24] border border-[rgba(251,191,36,0.3)]";
-                } else if (status === "weak") {
-                  borderClass = isSelected
-                    ? "border-[#F87171] bg-[#121D18] shadow-[0_0_15px_rgba(248,113,113,0.15)]"
-                    : "border-[rgba(248,113,113,0.25)] hover:border-[#F87171] bg-[#0D1512]";
-                  badgeClass = "bg-[#121D18] text-[#F87171] border border-[rgba(248,113,113,0.3)]";
-                }
-
                 return (
                   <button
                     key={topic.id}
                     type="button"
                     onClick={() => handleTopicClick(topic)}
                     className={cn(
-                      "w-full text-left p-3 rounded-xl border transition-all relative overflow-hidden group",
-                      borderClass
+                      "w-full text-left p-3 rounded-control border transition-all relative group bg-surface",
+                      isSelected
+                        ? "border-accent ring-1 ring-accent bg-accent-soft/30 shadow-sm"
+                        : "border-brandBorder hover:border-brandBorder-strong hover:bg-surface-subtle"
                     )}
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <span className="text-xs font-semibold text-[#F1F7F4] group-hover:text-[#B7FFE8] transition line-clamp-2">
+                      <span className="text-xs font-medium text-brandText-primary group-hover:text-accent transition line-clamp-2">
                         {topic.title}
                       </span>
-                      <span className={cn("text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full shrink-0", badgeClass)}>
+                      <span
+                        className={cn(
+                          "text-[10px] font-mono font-medium px-1.5 py-0.5 rounded shrink-0",
+                          status === "strong"
+                            ? "bg-accent-soft text-accent"
+                            : status === "medium"
+                            ? "bg-[#FEF5E7] text-[#C27803]"
+                            : status === "weak"
+                            ? "bg-[#FDF0EE] text-[#B84A39]"
+                            : "bg-surface-subtle text-brandText-muted"
+                        )}
+                      >
                         {Math.round(mastery)}%
                       </span>
                     </div>
 
-                    <div className="mt-2 flex items-center justify-between text-[10px] text-[#6D7C74] font-mono">
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-brandText-muted font-mono">
                       <span>Exam: {topic.exam_weight ? `${Math.round(topic.exam_weight * 100)}%` : "N/A"}</span>
                       {topic.blind_spot_count && topic.blind_spot_count > 0 ? (
-                        <span className="text-[#F87171] font-bold flex items-center gap-0.5">
-                          <AlertTriangle className="h-3 w-3" /> Blind Spot
+                        <span className="text-[#B84A39] font-medium flex items-center gap-0.5">
+                          <AlertTriangle className="h-3 w-3" /> Blind spot
                         </span>
                       ) : (
-                        <span className="text-[#6D7C74]">{topic.total_attempts || 0} attempts</span>
+                        <span>{topic.total_attempts || 0} attempts</span>
                       )}
                     </div>
                   </button>
@@ -176,29 +169,20 @@ export function PrerequisiteGraph({
 
       {/* Selected Topic Inspector Drawer / Card */}
       {selectedTopic && (
-        <div className="rounded-xl border border-[rgba(0,214,160,0.2)] bg-[#121D18] p-4 text-xs space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-[rgba(183,255,232,0.08)]">
+        <div className="rounded-card border border-brandBorder bg-surface p-4 text-xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-brandBorder">
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-[#00D6A0]">
-                Node Inspector
+              <span className="text-[10px] font-mono uppercase tracking-wider text-accent font-semibold">
+                Topic Details & Blockers
               </span>
-              <h4 className="text-sm font-bold text-[#F1F7F4]">{selectedTopic.title}</h4>
+              <h4 className="text-sm font-semibold text-brandText-primary">{selectedTopic.title}</h4>
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="rounded-full bg-[#0D1512] border border-[rgba(183,255,232,0.10)] px-2.5 py-0.5 text-[#A0ADA6] text-[11px] font-mono">
+              <span className="rounded-control bg-surface-subtle border border-brandBorder px-2.5 py-1 text-brandText-secondary text-[11px] font-mono">
                 Unit: {selectedTopic.unit_module || "Core"}
               </span>
-              <span
-                className={cn(
-                  "rounded-full px-2.5 py-0.5 font-bold font-mono text-[11px]",
-                  selectedTopic.classification === "strong"
-                    ? "bg-[#17231D] text-[#00D6A0] border border-[rgba(0,214,160,0.3)]"
-                    : selectedTopic.classification === "medium"
-                    ? "bg-[#17231D] text-[#FBBF24] border border-[rgba(251,191,36,0.3)]"
-                    : "bg-[#17231D] text-[#F87171] border border-[rgba(248,113,113,0.3)]"
-                )}
-              >
+              <span className="rounded-control bg-surface-subtle border border-brandBorder px-2.5 py-1 text-brandText-primary font-mono text-[11px] font-medium">
                 Mastery: {Math.round(selectedTopic.current_mastery ?? 45)}%
               </span>
             </div>
@@ -206,17 +190,17 @@ export function PrerequisiteGraph({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {/* Direct Prerequisites */}
-            <div className="bg-[#0D1512] p-3 rounded-lg border border-[rgba(183,255,232,0.08)]">
-              <span className="text-[11px] font-semibold text-[#A0ADA6] block mb-1.5 flex items-center gap-1.5 font-mono uppercase tracking-wider">
-                <ArrowRight className="h-3 w-3 text-[#FBBF24] rotate-180" /> Direct Prerequisites:
+            <div className="bg-surface-subtle p-3 rounded-control border border-brandBorder">
+              <span className="text-[11px] font-semibold text-brandText-secondary block mb-1.5 flex items-center gap-1.5 font-mono uppercase tracking-wider">
+                <ArrowRight className="h-3 w-3 text-accent rotate-180" /> Direct Prerequisites:
               </span>
               {getPrereqsForTopic(selectedTopic.id).length === 0 ? (
-                <p className="text-[#6D7C74] italic text-[11px]">Foundational entry topic (zero prerequisites).</p>
+                <p className="text-brandText-muted italic text-[11px]">Foundational entry topic (zero prerequisites required).</p>
               ) : (
                 <ul className="space-y-1">
                   {getPrereqsForTopic(selectedTopic.id).map((p) => (
-                    <li key={p.id} className="text-[#F1F7F4] flex items-center gap-1.5 font-medium">
-                      <span className="h-1.5 w-1.5 rounded-full bg-[#00D6A0]" />
+                    <li key={p.id} className="text-brandText-primary flex items-center gap-1.5 font-medium">
+                      <span className="h-1.5 w-1.5 rounded-full bg-accent" />
                       {p.title} ({Math.round(p.current_mastery ?? 45)}%)
                     </li>
                   ))}
@@ -225,17 +209,17 @@ export function PrerequisiteGraph({
             </div>
 
             {/* Downstream Dependents */}
-            <div className="bg-[#0D1512] p-3 rounded-lg border border-[rgba(183,255,232,0.08)]">
-              <span className="text-[11px] font-semibold text-[#A0ADA6] block mb-1.5 flex items-center gap-1.5 font-mono uppercase tracking-wider">
-                <ArrowRight className="h-3 w-3 text-[#00D6A0]" /> Downstream Blocked Topics:
+            <div className="bg-surface-subtle p-3 rounded-control border border-brandBorder">
+              <span className="text-[11px] font-semibold text-brandText-secondary block mb-1.5 flex items-center gap-1.5 font-mono uppercase tracking-wider">
+                <ArrowRight className="h-3 w-3 text-accent" /> Downstream Blocked Topics:
               </span>
               {getDependentsForTopic(selectedTopic.id).length === 0 ? (
-                <p className="text-[#6D7C74] italic text-[11px]">Terminal topic (no downstream dependents).</p>
+                <p className="text-brandText-muted italic text-[11px]">Terminal topic (no downstream dependents).</p>
               ) : (
                 <ul className="space-y-1">
                   {getDependentsForTopic(selectedTopic.id).map((d) => (
-                    <li key={d.id} className="text-[#F1F7F4] flex items-center gap-1.5 font-medium">
-                      <span className="h-1.5 w-1.5 rounded-full bg-[#FBBF24]" />
+                    <li key={d.id} className="text-brandText-primary flex items-center gap-1.5 font-medium">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#C27803]" />
                       {d.title} ({Math.round(d.current_mastery ?? 45)}%)
                     </li>
                   ))}
@@ -245,6 +229,6 @@ export function PrerequisiteGraph({
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

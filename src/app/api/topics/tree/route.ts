@@ -40,23 +40,33 @@ export async function GET(request: Request) {
         .eq("workspace_id", workspaceId)
         .order("order_index", { ascending: true });
 
+      if (topicErr) {
+        return NextResponse.json(
+          { error: "Failed to load workspace topics", details: topicErr.message },
+          { status: 500 }
+        );
+      }
+
       const { data: prereqData, error: prereqErr } = await admin
         .from("topic_prerequisites")
         .select("*")
         .eq("workspace_id", workspaceId);
 
-      if (!topicErr && topicData && topicData.length > 0) {
-        topics = topicData;
+      if (prereqErr) {
+        return NextResponse.json(
+          { error: "Failed to load topic prerequisites", details: prereqErr.message },
+          { status: 500 }
+        );
       }
-      if (!prereqErr && prereqData) {
-        prerequisites = prereqData;
-      }
-    }
 
-    // Fallback to fixture if offline or workspace has no topics
-    if (topics.length === 0) {
+      topics = topicData || [];
+      prerequisites = prereqData || [];
+    } else if (auth.isDemo) {
       topics = DEMO_TOPICS;
       prerequisites = DEMO_PREREQUISITES;
+    } else {
+      topics = [];
+      prerequisites = [];
     }
 
     const tree = buildTopicTree(topics, prerequisites);

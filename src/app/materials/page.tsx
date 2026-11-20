@@ -1,13 +1,13 @@
 "use client";
 
 // ==============================================================================
-// GapLens AI — Screen 3: Materials, Ingestion State Machine & Topic Hierarchy
+// GapLens AI — Screen 3: Materials, Ingestion Pipeline & Topic Hierarchy
 // File: src/app/materials/page.tsx
-// Redesigned: Dark obsidian (#080D0C), emerald/mint lighting (#00D6A0, #B7FFE8),
-// hairline borders, telemetry labels, and clear document ingestion pipelines.
+// Redesigned: Editorial light-first palette, clean document table, compact upload
+// dropzone, and integrated dependency map / curriculum outline view.
 // ==============================================================================
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   UploadCloud,
   FileText,
@@ -15,27 +15,47 @@ import {
   AlertTriangle,
   RefreshCw,
   Trash2,
-  FolderGit2,
   Layers,
   GitBranch,
   BookOpen,
-  ArrowRight,
   Filter,
-  Eye,
   FileCheck,
+  ChevronDown,
+  ChevronUp,
+  FileUp,
   Sparkles,
-  Info,
 } from "lucide-react";
 import { useWorkspace } from "@/components/workspace-context";
 import { PrerequisiteGraph } from "@/components/prerequisite-graph";
-import { DEMO_DOCUMENTS, DEMO_TOPICS, DEMO_PREREQUISITES } from "@/lib/demo/os-cs301-fixture";
+import { DEMO_DOCUMENTS, DEMO_PREREQUISITES } from "@/lib/demo/os-cs301-fixture";
 import type { DocumentRow } from "@/types/database";
+import { Card, PageHeader, StatusBadge, Button } from "@/components/ui/design-system";
 
 export default function MaterialsPage() {
-  const { workspace, documents: initialDocs, topics } = useWorkspace();
+  const {
+    workspace,
+    documents: initialDocs,
+    topics,
+    prerequisites,
+    setWorkspaceTopics,
+    setWorkspaceDocuments,
+    setWorkspacePrerequisites,
+    isDemo,
+  } = useWorkspace();
   const [documents, setDocuments] = useState<DocumentRow[]>(initialDocs || DEMO_DOCUMENTS);
   const [docFilter, setDocFilter] = useState<"all" | "syllabus" | "material" | "past_paper">("all");
-  const [activeTab, setActiveTab] = useState<"dag" | "tree">("dag");
+  const [activeTab, setActiveTab] = useState<"dag" | "outline">("dag");
+  const [showUploadArea, setShowUploadArea] = useState(false);
+  const [isExtractingTopics, setIsExtractingTopics] = useState(false);
+  const [isMappingPapers, setIsMappingPapers] = useState(false);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  // Sync with context initialDocs
+  useEffect(() => {
+    if (initialDocs && initialDocs.length > 0) {
+      setDocuments(initialDocs);
+    }
+  }, [initialDocs]);
 
   // Upload simulation and real processing state
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -72,6 +92,7 @@ export default function MaterialsPage() {
       return;
     }
 
+    setShowUploadArea(true);
     setIsUploading(true);
     setUploadProgress(15);
     setUploadFilename(file.name);
@@ -106,27 +127,49 @@ export default function MaterialsPage() {
       setUploadProgress(35);
       setStateMachineStage("extracting");
 
-      // Step 2: Read file as Base64 for unpdf extraction and embedding pipeline
-      const base64Data: string = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          const base64 = result.includes(",") ? result.split(",")[1] : result;
-          resolve(base64);
-        };
-        reader.onerror = () => reject(new Error("Failed to read local file contents."));
-        reader.readAsDataURL(file);
-      });
+      // Step 2: Attempt direct storage upload to bypass Vercel 4.5MB payload limit
+      let uploadedDirectly = false;
+      if (signData.uploadUrl && !signData.uploadUrl.includes("mock-storage")) {
+        try {
+          const uploadRes = await fetch(signData.uploadUrl, {
+            method: "PUT",
+            headers: { "Content-Type": mime },
+            body: file,
+          });
+          if (uploadRes.ok) {
+            uploadedDirectly = true;
+          }
+        } catch {
+          // Direct PUT failed or offline; continue to Base64 payload fallback
+        }
+      }
+
+      let base64Data: string | undefined = undefined;
+      if (!uploadedDirectly) {
+        base64Data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            const base64 = result.includes(",") ? result.split(",")[1] : result;
+            resolve(base64);
+          };
+          reader.onerror = () => reject(new Error("Failed to read local file contents."));
+          reader.readAsDataURL(file);
+        });
+      }
 
       setUploadProgress(60);
       setStateMachineStage("chunking");
 
-      // Step 3: Run real extraction, heading-aware chunking, and 768d embedding
+      // Step 3: Run real extraction, heading-aware chunking, and embedding
       const processRes = await fetch("/api/documents/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           documentId: signData.documentId,
+          workspaceId: workspace?.id,
+          filename: file.name,
+          docType,
           fileBase64: base64Data,
           indexVersion: 1,
         }),
@@ -196,7 +239,11 @@ export default function MaterialsPage() {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
-        setDocuments((prev) => [newDoc, ...prev]);
+        setDocuments((prev) => {
+          const nextDocs = [newDoc, ...prev];
+          setWorkspaceDocuments(nextDocs);
+          return nextDocs;
+        });
       }, 350);
     } catch (err: any) {
       setIsUploading(false);
@@ -205,8 +252,72 @@ export default function MaterialsPage() {
     }
   };
 
-  // Simulate document upload & state machine progression
+  // Connected syllabus extraction
+  const handleExtractTopics = async (docId?: string) => {
+    setIsExtractingTopics(true);
+    setActionSuccess(null);
+    setUploadError(null);
+    try {
+      const res = await fetch("/api/topics/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: workspace?.id || "10000000-0000-0000-0000-000000000001",
+          documentId: docId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to extract syllabus topics.");
+      }
+      if (Array.isArray(data.topics) && data.topics.length > 0) {
+        setWorkspaceTopics(data.topics);
+        if (Array.isArray(data.prerequisites)) {
+          setWorkspacePrerequisites(data.prerequisites);
+        }
+        setActionSuccess(
+          `Extracted ${data.topics.length} topics and ${data.prerequisites?.length || 0} prerequisite dependencies from syllabus!`
+        );
+        setActiveTab("outline");
+      }
+    } catch (err: any) {
+      setUploadError(err.message || "Failed to extract syllabus topics.");
+    } finally {
+      setIsExtractingTopics(false);
+    }
+  };
+
+  // Connected past paper question mapping
+  const handleMapPastPaper = async (paperDoc: DocumentRow) => {
+    setIsMappingPapers(true);
+    setActionSuccess(null);
+    setUploadError(null);
+    try {
+      const res = await fetch("/api/papers/map", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: workspace?.id || "10000000-0000-0000-0000-000000000001",
+          documentId: paperDoc.id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to map past-paper questions.");
+      }
+      setActionSuccess(
+        `Mapped ${data.mappedCount} past-paper questions to syllabus topics and updated exam weights!`
+      );
+    } catch (err: any) {
+      setUploadError(err.message || "Failed to map past paper.");
+    } finally {
+      setIsMappingPapers(false);
+    }
+  };
+
+  // Demo file upload simulation
   const handleSimulateUpload = (fileName: string, isOcrDemo = false) => {
+    setShowUploadArea(true);
     setIsUploading(true);
     setUploadProgress(10);
     setUploadFilename(fileName);
@@ -263,10 +374,10 @@ export default function MaterialsPage() {
             };
 
             setDocuments((prev) => [newDoc, ...prev]);
-          }, 600);
-        }, 600);
-      }, 700);
-    }, 600);
+          }, 500);
+        }, 500);
+      }, 500);
+    }, 500);
   };
 
   const handleDeleteDoc = (id: string) => {
@@ -279,7 +390,7 @@ export default function MaterialsPage() {
     );
   };
 
-  // Group topics by Unit for Tree View
+  // Group topics by Unit for Outline View
   const unitsMap = new Map<string, typeof topics>();
   for (const t of topics) {
     const unit = t.unit_module || "Core Operating Systems";
@@ -288,387 +399,462 @@ export default function MaterialsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#080D0C] text-[#F1F7F4] relative overflow-hidden">
-      {/* Background atmospheric emerald ambient glow */}
-      <div className="absolute top-0 right-1/4 w-[600px] h-[350px] bg-[#00D6A0]/[0.035] rounded-full blur-[140px] pointer-events-none" />
+    <div className="space-y-8 max-w-7xl mx-auto">
+      {/* =========================================================================
+          PAGE HEADER
+          ========================================================================= */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-6 border-b border-brandBorder">
+        <PageHeader
+          title="Course materials"
+          description="Manage the notes, syllabus and past papers used to build your course map and source-backed assessments."
+        />
 
-      <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-6 pb-6 border-b border-[#B7FFE8]/[0.08]">
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2 font-mono text-[11px] tracking-wider text-[#00D6A0]">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#00D6A0] animate-pulse" />
-              <span>[ SYSTEM 03 / KNOWLEDGE REPOSITORY ]</span>
-              <span className="text-[#6D7C74]">•</span>
-              <span className="text-[#A0ADA6]">INGESTION & TOPOLOGY</span>
-            </div>
-            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-[#F1F7F4]">
-              Materials & Topic Hierarchy
-            </h1>
-            <p className="text-sm text-[#A0ADA6] max-w-2xl">
-              Curate course syllabi, lecture slides, and past papers. Inspect verified semantic chunks and prerequisite DAG relationships.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2.5 shrink-0">
-            <span className="rounded-xl bg-[#0D1512] border border-[#00D6A0]/30 px-3.5 py-1.5 text-xs font-mono text-[#00D6A0]">
-              {documents.length} Indexed Materials
-            </span>
-            <span className="rounded-xl bg-[#0D1512] border border-[#B7FFE8]/[0.1] px-3.5 py-1.5 text-xs font-mono text-[#A0ADA6]">
-              {topics.length} Grounded Topics
-            </span>
-          </div>
+        <div className="flex items-center gap-3">
+          <Button
+            variant={showUploadArea ? "secondary" : "primary"}
+            onClick={() => setShowUploadArea(!showUploadArea)}
+            className="shrink-0"
+          >
+            <FileUp className="h-4 w-4" />
+            <span>{showUploadArea ? "Hide upload area" : "Upload material"}</span>
+          </Button>
         </div>
+      </div>
 
-        {/* =========================================================================
-            SECTION 1: DRAG & DROP UPLOAD AREA & INGESTION STATE MACHINE
-            ========================================================================= */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Upload Dropzone */}
-          <div className="lg:col-span-2 rounded-2xl border-2 border-dashed border-[#B7FFE8]/[0.12] hover:border-[#00D6A0]/40 bg-[#0D1512]/90 p-6 sm:p-8 flex flex-col items-center justify-center text-center transition-all duration-300 group relative">
-            <div className="h-14 w-14 rounded-2xl bg-[#00D6A0]/10 border border-[#00D6A0]/30 flex items-center justify-center text-[#00D6A0] mb-4 group-hover:scale-105 transition-all">
-              <UploadCloud className="h-7 w-7" />
-            </div>
-
-            <h3 className="text-base sm:text-lg font-bold text-[#F1F7F4]">
-              Upload Course Documents
-            </h3>
-            <p className="text-xs sm:text-sm text-[#A0ADA6] max-w-md mt-1.5 leading-relaxed">
-              Drag and drop your course syllabus, lecture slides, or past exam papers for chunking, vector indexing, and topic alignment.
-            </p>
-            <p className="text-[11px] text-[#6D7C74] font-mono mt-1">
-              Direct signed storage upload: .pdf, .txt, .md (Max 50MB)
-            </p>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleRealFileUpload(file);
-                e.target.value = "";
-              }}
-            />
-
-            <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-                className="rounded-xl bg-[#00D6A0] hover:bg-[#00D6A0]/90 text-[#080D0C] font-semibold px-4 py-2 text-xs shadow-lg shadow-[#00D6A0]/20 transition disabled:opacity-50 inline-flex items-center gap-2 font-mono"
-              >
-                <UploadCloud className="h-4 w-4" />
-                <span>Select Real File (.pdf, .txt, .md)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSimulateUpload("Operating_Systems_Midterm_Review.pdf")}
-                disabled={isUploading}
-                className="rounded-xl bg-[#121D18] hover:bg-[#17231D] text-[#F1F7F4] border border-[#B7FFE8]/[0.1] px-3.5 py-2 text-xs font-mono transition disabled:opacity-50"
-              >
-                Demo: Midterm Review PDF
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSimulateUpload("Scanned_Lecture_Diagrams.pdf", true)}
-                disabled={isUploading}
-                className="rounded-xl bg-[#121D18] hover:bg-[#17231D] text-[#FBBF24] border border-[#FBBF24]/30 px-3.5 py-2 text-xs font-mono transition disabled:opacity-50"
-              >
-                Demo: Scanned PDF (needs_ocr)
-              </button>
-            </div>
-
-            {uploadError && (
-              <div className="mt-4 max-w-md rounded-xl border border-[#F87171]/40 bg-[#F87171]/10 p-3 text-xs text-[#F87171] flex items-center gap-2 text-left">
-                <AlertTriangle className="h-4 w-4 shrink-0 text-[#F87171]" />
-                <span>{uploadError}</span>
-              </div>
-            )}
-          </div>
-
-          {/* State Machine Status Visualizer */}
-          <div className="rounded-2xl border border-[#B7FFE8]/[0.08] bg-[#0D1512]/90 p-5 sm:p-6 space-y-3.5 shadow-xl flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between pb-3 border-b border-[#B7FFE8]/[0.06]">
-                <h4 className="text-xs font-mono font-bold text-[#A0ADA6] uppercase tracking-wider">
-                  Ingestion Pipeline
-                </h4>
-                <span className="text-[10px] font-mono text-[#00D6A0]">
-                  {isUploading ? "Processing..." : stateMachineStage === "idle" ? "Idle" : "Ready"}
-                </span>
+      {/* =========================================================================
+          COMPACT UPLOAD DROPZONE & INGESTION PIPELINE (Expandable)
+          ========================================================================= */}
+      {showUploadArea && (
+        <Card className="border-dashed border-2 border-brandBorder bg-surface-subtle">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Drop area */}
+            <div className="lg:col-span-2 flex flex-col items-center justify-center p-6 text-center space-y-3">
+              <div className="h-12 w-12 rounded-full bg-accent-soft text-accent flex items-center justify-center">
+                <UploadCloud className="h-6 w-6" />
               </div>
 
-              {/* Stepper Display */}
-              <div className="space-y-2 pt-3 text-xs">
-                {[
-                  { id: "uploaded", label: "1. Storage Upload", desc: "Presigned direct upload" },
-                  { id: "extracting", label: "2. unpdf Parser", desc: "1-based page metadata" },
-                  { id: "chunking", label: "3. Semantic Chunker", desc: "500-800 tokens, 100 overlap" },
-                  { id: "embedding", label: "4. Vector Embeddings", desc: "768-dim dense vectors" },
-                  { id: "indexed", label: "5. Grounded Index", desc: "Vector + FTS RPC ready" },
-                ].map((step, idx) => {
-                  const stages = ["uploaded", "extracting", "chunking", "embedding", "indexed"];
-                  const currentIdx = stages.indexOf(stateMachineStage);
-                  const stepIdx = stages.indexOf(step.id);
-                  const isPast = currentIdx > stepIdx;
-                  const isCurrent = currentIdx === stepIdx;
-
-                  return (
-                    <div
-                      key={step.id}
-                      className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all ${
-                        isCurrent
-                          ? "border-[#00D6A0]/80 bg-[#00D6A0]/10 text-[#B7FFE8]"
-                          : isPast
-                          ? "border-[#00D6A0]/30 bg-[#00D6A0]/[0.04] text-[#00D6A0]"
-                          : "border-[#B7FFE8]/[0.04] bg-[#080D0C]/40 text-[#6D7C74]"
-                      }`}
-                    >
-                      <div
-                        className={`h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-mono shrink-0 ${
-                          isPast
-                            ? "bg-[#00D6A0] text-[#080D0C] font-bold"
-                            : isCurrent
-                            ? "bg-[#00D6A0] text-[#080D0C] font-bold animate-pulse"
-                            : "bg-[#17231D] text-[#6D7C74]"
-                        }`}
-                      >
-                        {isPast ? "✓" : idx + 1}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <span className="font-semibold block text-xs truncate">{step.label}</span>
-                        <span className="text-[10px] opacity-75 truncate block">{step.desc}</span>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div>
+                <h3 className="text-sm font-semibold text-brandText-primary">
+                  Drop a file here or choose a file
+                </h3>
+                <p className="text-xs text-brandText-secondary mt-1">
+                  Supported formats: PDF, TXT, Markdown (up to 50MB)
+                </p>
               </div>
 
-              {/* Warning state for OCR */}
-              {stateMachineStage === "needs_ocr" && (
-                <div className="mt-3 rounded-xl bg-[#FBBF24]/10 border border-[#FBBF24]/40 p-3 text-xs text-[#FBBF24] flex items-start gap-2.5">
-                  <AlertTriangle className="h-4 w-4 text-[#FBBF24] shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold block">Status: needs_ocr</span>
-                    Scanned image or empty-text PDF detected (&lt;50 extracted characters). Honest OCR warning attached.
-                  </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                id="file-upload-input"
+                accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleRealFileUpload(file);
+                  e.target.value = "";
+                }}
+              />
+
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                <label
+                  htmlFor="file-upload-input"
+                  className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-control text-xs font-medium bg-accent text-white hover:bg-accent-hover transition-colors shadow-sm"
+                >
+                  <UploadCloud className="h-3.5 w-3.5" />
+                  <span>Choose file</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => handleSimulateUpload("Operating_Systems_Midterm_Review.pdf")}
+                  disabled={isUploading}
+                  className="px-3 py-1.5 rounded-control text-xs font-mono text-brandText-secondary bg-surface border border-brandBorder hover:border-brandBorder-strong transition-colors disabled:opacity-50"
+                >
+                  Sample: Review PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSimulateUpload("Scanned_Lecture_Diagrams.pdf", true)}
+                  disabled={isUploading}
+                  className="px-3 py-1.5 rounded-control text-xs font-mono text-[#85553F] bg-[#FAF2EE] border border-[#E8CFC4] hover:bg-[#F3E8E1] transition-colors disabled:opacity-50"
+                >
+                  Sample: Scanned PDF (OCR)
+                </button>
+              </div>
+
+              {uploadError && (
+                <div className="p-3 rounded-control bg-[#FDF0EE] border border-[#F2C9BE] text-[#B84A39] text-xs flex items-center gap-2 text-left w-full mt-3">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  <span>{uploadError}</span>
                 </div>
               )}
             </div>
 
-            {/* Progress bar */}
-            {isUploading && (
-              <div className="space-y-1.5 pt-2 border-t border-[#B7FFE8]/[0.06]">
-                <div className="flex justify-between text-[11px] text-[#00D6A0] font-mono">
-                  <span className="truncate max-w-[200px]">{uploadFilename}</span>
-                  <span>{uploadProgress}%</span>
+            {/* Stepper / Status */}
+            <div className="bg-surface rounded-card p-4 border border-brandBorder flex flex-col justify-between space-y-3">
+              <div>
+                <div className="flex items-center justify-between pb-2 border-b border-brandBorder">
+                  <span className="text-xs font-semibold text-brandText-primary">
+                    Processing pipeline
+                  </span>
+                  <span className="text-[11px] font-mono text-brandText-muted">
+                    {isUploading ? "Active" : stateMachineStage === "idle" ? "Idle" : "Complete"}
+                  </span>
                 </div>
-                <div className="h-1.5 w-full bg-[#17231D] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-[#00D6A0] to-[#B7FFE8] transition-all duration-300"
-                    style={{ width: `${uploadProgress}%` }}
-                  />
+
+                <div className="space-y-2 mt-3 text-xs">
+                  {[
+                    { id: "uploaded", label: "1. Upload", desc: "Storage transfer" },
+                    { id: "extracting", label: "2. Text extraction", desc: "Page-level text" },
+                    { id: "chunking", label: "3. Chunking", desc: "Heading-aware sections" },
+                    { id: "embedding", label: "4. Vector indexing", desc: "768-dim embeddings" },
+                    { id: "indexed", label: "5. Complete", desc: "Ready for RAG & DAG" },
+                  ].map((step, idx) => {
+                    const stages = ["uploaded", "extracting", "chunking", "embedding", "indexed"];
+                    const currentIdx = stages.indexOf(stateMachineStage);
+                    const stepIdx = stages.indexOf(step.id);
+                    const isPast = currentIdx > stepIdx;
+                    const isCurrent = currentIdx === stepIdx;
+
+                    return (
+                      <div
+                        key={step.id}
+                        className={`flex items-center gap-2.5 p-2 rounded-control border text-xs transition-colors ${
+                          isCurrent
+                            ? "border-accent bg-accent-soft/40 text-accent font-medium"
+                            : isPast
+                            ? "border-brandBorder bg-surface-subtle text-brandText-primary"
+                            : "border-transparent text-brandText-muted"
+                        }`}
+                      >
+                        <div
+                          className={`h-4 w-4 rounded-full flex items-center justify-center text-[10px] font-mono shrink-0 ${
+                            isPast
+                              ? "bg-accent text-white"
+                              : isCurrent
+                              ? "bg-accent text-white animate-pulse"
+                              : "bg-surface-muted text-brandText-muted"
+                          }`}
+                        >
+                          {isPast ? "✓" : idx + 1}
+                        </div>
+                        <div className="min-w-0 flex-1 flex items-center justify-between">
+                          <span className="truncate">{step.label}</span>
+                          <span className="text-[10px] text-brandText-muted">{step.desc}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
+
+                {stateMachineStage === "needs_ocr" && (
+                  <div className="mt-3 p-2.5 rounded-control bg-[#FAF2EE] border border-[#E8CFC4] text-xs text-[#85553F]">
+                    <strong>Needs OCR:</strong> Scanned image PDF detected (&lt;50 characters per page). Text extraction requires OCR preprocessing.
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        </div>
 
-        {/* =========================================================================
-            SECTION 2: INDEXED DOCUMENTS REPOSITORY TABLE
-            ========================================================================= */}
-        <div className="rounded-2xl border border-[#B7FFE8]/[0.08] bg-[#0D1512]/90 p-6 space-y-4 shadow-xl">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#B7FFE8]/[0.06]">
-            <div>
-              <h3 className="text-base font-bold text-[#F1F7F4] flex items-center gap-2">
-                <FileCheck className="h-4 w-4 text-[#00D6A0]" />
-                <span>Indexed Course Materials</span>
-              </h3>
-              <p className="text-xs text-[#A0ADA6] mt-0.5">
-                Active documents in workspace partition with verifiable chunk citations.
-              </p>
-            </div>
-
-            {/* Filter Pills */}
-            <div className="flex items-center gap-1.5 bg-[#080D0C] p-1 rounded-xl border border-[#B7FFE8]/[0.08] text-xs font-mono">
-              {(["all", "syllabus", "material", "past_paper"] as const).map((filter) => (
-                <button
-                  key={filter}
-                  type="button"
-                  onClick={() => setDocFilter(filter)}
-                  className={`px-3 py-1 rounded-lg capitalize transition-all ${
-                    docFilter === filter
-                      ? "bg-[#00D6A0]/15 text-[#00D6A0] border border-[#00D6A0]/40 font-semibold"
-                      : "text-[#A0ADA6] hover:text-[#F1F7F4] border border-transparent"
-                  }`}
-                >
-                  {filter.replace("_", " ")}
-                </button>
-              ))}
+              {isUploading && (
+                <div className="pt-2 border-t border-brandBorder space-y-1">
+                  <div className="flex justify-between text-[11px] font-mono text-brandText-secondary">
+                    <span className="truncate max-w-[160px]">{uploadFilename}</span>
+                    <span>{uploadProgress}%</span>
+                  </div>
+                  <div className="h-1.5 w-full bg-surface-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-accent transition-all duration-300"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
+        </Card>
+      )}
 
-          {/* Document Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {filteredDocs.map((doc) => (
-              <div
-                key={doc.id}
-                className="rounded-xl border border-[#B7FFE8]/[0.08] bg-[#121D18]/70 p-4 space-y-3.5 flex flex-col justify-between hover:border-[#00D6A0]/30 hover:bg-[#121D18] transition-all duration-200"
+      {/* =========================================================================
+          DOCUMENT REPOSITORY TABLE
+          ========================================================================= */}
+      <Card className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-brandBorder">
+          <div>
+            <h3 className="text-base font-semibold text-brandText-primary">
+              Indexed materials ({filteredDocs.length})
+            </h3>
+            <p className="text-xs text-brandText-secondary mt-0.5">
+              Source documents partitioned for RAG retrieval and verified citations.
+            </p>
+          </div>
+
+          {/* Filter Pills */}
+          <div className="flex items-center gap-1 bg-surface-subtle p-1 rounded-control border border-brandBorder text-xs">
+            {(["all", "syllabus", "material", "past_paper"] as const).map((filter) => (
+              <button
+                key={filter}
+                type="button"
+                onClick={() => setDocFilter(filter)}
+                className={`px-3 py-1 rounded-control capitalize transition-colors font-medium ${
+                  docFilter === filter
+                    ? "bg-surface text-brandText-primary shadow-xs border border-brandBorder"
+                    : "text-brandText-muted hover:text-brandText-primary border border-transparent"
+                }`}
               >
-                <div>
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <span
-                      className={`rounded px-2 py-0.5 text-[10px] font-mono font-bold uppercase ${
-                        doc.doc_type === "syllabus"
-                          ? "bg-sky-500/10 text-sky-300 border border-sky-500/30"
-                          : doc.doc_type === "past_paper"
-                          ? "bg-amber-500/10 text-amber-300 border border-amber-500/30"
-                          : "bg-[#00D6A0]/10 text-[#00D6A0] border border-[#00D6A0]/30"
-                      }`}
-                    >
-                      {doc.doc_type.replace("_", " ")}
-                    </span>
-                    <span className="flex items-center gap-1 text-[#00D6A0] text-[10px] font-mono">
-                      <CheckCircle2 className="h-3 w-3" /> Indexed
-                    </span>
-                  </div>
-
-                  <h4 className="text-xs font-bold text-[#F1F7F4] truncate" title={doc.filename}>
-                    {doc.filename}
-                  </h4>
-
-                  <div className="mt-2.5 grid grid-cols-2 gap-2 text-[11px] text-[#A0ADA6] bg-[#080D0C]/60 p-2.5 rounded-lg border border-[#B7FFE8]/[0.06] font-mono">
-                    <span>Pages: {doc.page_count}</span>
-                    <span>Chunks: {doc.chunk_count}</span>
-                    <span>Size: {(doc.declared_size_bytes / 1024).toFixed(0)} KB</span>
-                    <span>Ver: {doc.parser_version}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-2 border-t border-[#B7FFE8]/[0.06] text-xs font-mono">
-                  <button
-                    type="button"
-                    onClick={() => handleReindexDoc(doc.id)}
-                    className="text-[#A0ADA6] hover:text-[#00D6A0] flex items-center gap-1.5 transition text-[11px]"
-                  >
-                    <RefreshCw className="h-3 w-3" /> Re-index
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteDoc(doc.id)}
-                    className="text-[#A0ADA6] hover:text-[#F87171] flex items-center gap-1.5 transition text-[11px]"
-                  >
-                    <Trash2 className="h-3 w-3" /> Delete
-                  </button>
-                </div>
-              </div>
+                {filter === "all" ? "All" : filter.replace("_", " ")}
+              </button>
             ))}
           </div>
         </div>
 
-        {/* =========================================================================
-            SECTION 3: CURRICULUM TOPIC HIERARCHY TREE & PREREQUISITE DAG
-            ========================================================================= */}
-        <div className="space-y-4">
-          {/* View Toggle */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setActiveTab("dag")}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-mono font-semibold transition ${
-                  activeTab === "dag"
-                    ? "bg-[#00D6A0] text-[#080D0C] shadow-lg shadow-[#00D6A0]/20"
-                    : "bg-[#0D1512] border border-[#B7FFE8]/[0.08] text-[#A0ADA6] hover:text-[#F1F7F4]"
-                }`}
-              >
-                <GitBranch className="h-3.5 w-3.5" />
-                Prerequisite DAG Flow
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("tree")}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-mono font-semibold transition ${
-                  activeTab === "tree"
-                    ? "bg-[#00D6A0] text-[#080D0C] shadow-lg shadow-[#00D6A0]/20"
-                    : "bg-[#0D1512] border border-[#B7FFE8]/[0.08] text-[#A0ADA6] hover:text-[#F1F7F4]"
-                }`}
-              >
-                <Layers className="h-3.5 w-3.5" />
-                Hierarchical Tree View
-              </button>
-            </div>
-          </div>
-
-          {/* View 1: Prerequisite DAG Flow */}
-          {activeTab === "dag" && (
-            <PrerequisiteGraph topics={topics} prerequisites={DEMO_PREREQUISITES} />
-          )}
-
-          {/* View 2: Hierarchical Tree View */}
-          {activeTab === "tree" && (
-            <div className="rounded-2xl border border-[#B7FFE8]/[0.08] bg-[#0D1512]/90 p-6 shadow-xl space-y-6">
-              <div className="pb-3 border-b border-[#B7FFE8]/[0.06]">
-                <h3 className="text-base font-bold text-[#F1F7F4] flex items-center gap-2">
-                  <Layers className="h-5 w-5 text-[#00D6A0]" />
-                  <span>Grounded Course Units & Topics</span>
-                </h3>
-                <p className="text-xs text-[#A0ADA6] mt-0.5">
-                  Extracted directly from CS301_Operating_Systems_Syllabus.pdf.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                {Array.from(unitsMap.entries()).map(([unitName, unitTopics], uIdx) => (
-                  <div
-                    key={unitName}
-                    className="rounded-xl border border-[#B7FFE8]/[0.08] bg-[#121D18]/60 p-4 space-y-3"
-                  >
-                    <div className="flex items-center justify-between pb-2 border-b border-[#B7FFE8]/[0.06]">
-                      <span className="text-sm font-bold text-[#B7FFE8]">
-                        Unit {uIdx + 1}: {unitName}
-                      </span>
-                      <span className="text-xs text-[#A0ADA6] font-mono">
-                        {unitTopics.length} Core Topics
+        {/* Clean Responsive Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-brandBorder text-brandText-muted font-medium">
+                <th className="py-2.5 px-3">Document name</th>
+                <th className="py-2.5 px-3">Type</th>
+                <th className="py-2.5 px-3">Pages</th>
+                <th className="py-2.5 px-3">Chunks</th>
+                <th className="py-2.5 px-3">Status</th>
+                <th className="py-2.5 px-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-brandBorder">
+              {filteredDocs.map((doc) => (
+                <tr key={doc.id} className="hover:bg-surface-subtle/50 transition-colors">
+                  <td className="py-3 px-3 font-medium text-brandText-primary">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-accent shrink-0" />
+                      <span className="truncate max-w-xs sm:max-w-md" title={doc.filename}>
+                        {doc.filename}
                       </span>
                     </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {unitTopics.map((topic) => (
-                        <div
-                          key={topic.id}
-                          className="rounded-lg border border-[#B7FFE8]/[0.06] bg-[#080D0C]/60 p-3 flex items-center justify-between text-xs"
+                  </td>
+                  <td className="py-3 px-3">
+                    <span className="capitalize px-2 py-0.5 rounded-full text-[11px] bg-surface-subtle border border-brandBorder text-brandText-secondary font-mono">
+                      {doc.doc_type.replace("_", " ")}
+                    </span>
+                  </td>
+                  <td className="py-3 px-3 font-mono text-brandText-secondary">
+                    {doc.page_count ?? "—"}
+                  </td>
+                  <td className="py-3 px-3 font-mono text-brandText-secondary">
+                    {doc.chunk_count ?? "—"}
+                  </td>
+                  <td className="py-3 px-3">
+                    {doc.status === "indexed" ? (
+                      <StatusBadge variant="info" label="Indexed" />
+                    ) : doc.status === "needs_ocr" ? (
+                      <StatusBadge variant="warm" label="Needs OCR" />
+                    ) : (
+                      <StatusBadge variant="neutral" label="Processing" />
+                    )}
+                  </td>
+                  <td className="py-3 px-3 text-right">
+                    <div className="inline-flex items-center gap-1.5">
+                      {doc.doc_type === "syllabus" && doc.status === "indexed" && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleExtractTopics(doc.id)}
+                          disabled={isExtractingTopics}
+                          className="text-xs text-accent"
+                          title="Extract syllabus topics"
                         >
-                          <div>
-                            <span className="font-semibold text-[#F1F7F4] block">{topic.title}</span>
-                            <span className="text-[11px] text-[#6D7C74] font-mono">
-                              Weight: {topic.exam_weight ? `${Math.round(topic.exam_weight * 100)}%` : "N/A"} •{" "}
-                              {topic.total_attempts || 0} attempts
-                            </span>
-                          </div>
+                          <Layers className="h-3.5 w-3.5" />
+                          <span>{isExtractingTopics ? "Extracting..." : "Extract topics"}</span>
+                        </Button>
+                      )}
+                      {doc.doc_type === "past_paper" && doc.status === "indexed" && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleMapPastPaper(doc)}
+                          disabled={isMappingPapers}
+                          className="text-xs text-accent"
+                          title="Map exam questions & compute weights"
+                        >
+                          <BookOpen className="h-3.5 w-3.5" />
+                          <span>{isMappingPapers ? "Mapping..." : "Analyze weights"}</span>
+                        </Button>
+                      )}
+                      <Button
+                        variant="quiet"
+                        size="sm"
+                        onClick={() => handleReindexDoc(doc.id)}
+                        title="Re-index document"
+                        aria-label="Re-index document"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="quiet"
+                        size="sm"
+                        onClick={() => handleDeleteDoc(doc.id)}
+                        className="hover:text-status-danger"
+                        title="Delete document"
+                        aria-label="Delete document"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
-                          <span
-                            className={`rounded px-2.5 py-0.5 text-[10px] font-mono font-bold ${
-                              topic.classification === "strong"
-                                ? "bg-[#00D6A0]/15 text-[#00D6A0] border border-[#00D6A0]/30"
-                                : topic.classification === "medium"
-                                ? "bg-[#FBBF24]/15 text-[#FBBF24] border border-[#FBBF24]/30"
-                                : "bg-[#F87171]/15 text-[#F87171] border border-[#F87171]/30"
-                            }`}
-                          >
-                            {Math.round(topic.current_mastery ?? 45)}%
+      {/* Action Notification Banner */}
+      {actionSuccess && (
+        <div className="p-3.5 rounded-card bg-[#F4F8F6] border border-[#CDE5DB] text-status-success text-xs flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>{actionSuccess}</span>
+          </div>
+          <button type="button" onClick={() => setActionSuccess(null)} className="text-xs hover:opacity-75">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* =========================================================================
+          CURRICULUM TOPIC HIERARCHY & DEPENDENCY MAP
+          ========================================================================= */}
+      <div className="space-y-4">
+        {topics.length === 0 && documents.some((d) => d.doc_type === "syllabus" && d.status === "indexed") && (
+          <div className="p-4 rounded-card border border-accent/30 bg-accent-soft/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-brandText-primary">
+                Syllabus indexed and ready for topic extraction
+              </p>
+              <p className="text-xs text-brandText-secondary mt-0.5">
+                Extract curriculum units, topics, and prerequisite relationships to unlock your Diagnostic Lab and Study Plan.
+              </p>
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={isExtractingTopics}
+              onClick={() => {
+                const syllabusDoc = documents.find((d) => d.doc_type === "syllabus" && d.status === "indexed");
+                handleExtractTopics(syllabusDoc?.id);
+              }}
+              className="shrink-0"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>{isExtractingTopics ? "Extracting topics..." : "Extract curriculum topics"}</span>
+            </Button>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 bg-surface-subtle p-1 rounded-control border border-brandBorder">
+            <button
+              type="button"
+              onClick={() => setActiveTab("dag")}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-control text-xs font-medium transition-colors ${
+                activeTab === "dag"
+                  ? "bg-surface text-brandText-primary shadow-xs border border-brandBorder"
+                  : "text-brandText-muted hover:text-brandText-primary"
+              }`}
+            >
+              <GitBranch className="h-3.5 w-3.5 text-accent" />
+              <span>Dependency map</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("outline")}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-control text-xs font-medium transition-colors ${
+                activeTab === "outline"
+                  ? "bg-surface text-brandText-primary shadow-xs border border-brandBorder"
+                  : "text-brandText-muted hover:text-brandText-primary"
+              }`}
+            >
+              <Layers className="h-3.5 w-3.5 text-accent" />
+              <span>Curriculum outline</span>
+            </button>
+          </div>
+        </div>
+
+        {/* View 1: Dependency map */}
+        {activeTab === "dag" && (
+          <PrerequisiteGraph topics={topics} prerequisites={isDemo ? DEMO_PREREQUISITES : (prerequisites || [])} />
+        )}
+
+        {/* View 2: Curriculum outline */}
+        {activeTab === "outline" && (
+          <Card className="space-y-6">
+            <div className="pb-3 border-b border-brandBorder">
+              <h3 className="text-base font-semibold text-brandText-primary flex items-center gap-2">
+                <Layers className="h-4 w-4 text-accent" />
+                <span>Extracted Curriculum Units & Topics</span>
+              </h3>
+              <p className="text-xs text-brandText-secondary mt-0.5">
+                Structured hierarchy extracted from verified syllabus materials.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              {topics.length === 0 ? (
+                <div className="py-10 text-center space-y-3">
+                  <div className="h-10 w-10 rounded-full bg-accent-soft text-accent flex items-center justify-center mx-auto">
+                    <Layers className="h-5 w-5" />
+                  </div>
+                  <h4 className="text-sm font-semibold text-brandText-primary">No curriculum topics extracted yet</h4>
+                  <p className="text-xs text-brandText-secondary max-w-sm mx-auto">
+                    Upload your course syllabus in the upload area above and click &quot;Extract topics&quot; to build your topic tree.
+                  </p>
+                </div>
+              ) : (
+                Array.from(unitsMap.entries()).map(([unitName, unitTopics], uIdx) => (
+                <div
+                  key={unitName}
+                  className="rounded-card border border-brandBorder bg-surface-subtle p-4 space-y-3"
+                >
+                  <div className="flex items-center justify-between pb-2 border-b border-brandBorder">
+                    <span className="text-xs font-semibold text-brandText-primary">
+                      Unit {uIdx + 1}: {unitName}
+                    </span>
+                    <span className="text-xs text-brandText-muted font-mono">
+                      {unitTopics.length} core topics
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    {unitTopics.map((topic) => (
+                      <div
+                        key={topic.id}
+                        className="rounded-control border border-brandBorder bg-surface p-3 flex items-center justify-between text-xs"
+                      >
+                        <div>
+                          <span className="font-medium text-brandText-primary block">{topic.title}</span>
+                          <span className="text-[11px] text-brandText-muted font-mono">
+                            Exam weight: {topic.exam_weight ? `${Math.round(topic.exam_weight * 100)}%` : "N/A"} •{" "}
+                            {topic.total_attempts || 0} attempts
                           </span>
                         </div>
-                      ))}
-                    </div>
+
+                        <span
+                          className={`rounded px-2 py-0.5 text-[10px] font-mono font-medium ${
+                            topic.classification === "strong"
+                              ? "bg-accent-soft text-accent"
+                              : topic.classification === "medium"
+                              ? "bg-[#FEF5E7] text-[#C27803]"
+                              : "bg-[#FDF0EE] text-[#B84A39]"
+                          }`}
+                        >
+                          {Math.round(topic.current_mastery ?? 45)}%
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </div>
+              ))
+            )}
             </div>
-          )}
-        </div>
+          </Card>
+        )}
       </div>
     </div>
   );

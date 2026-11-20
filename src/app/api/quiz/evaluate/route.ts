@@ -26,6 +26,13 @@ const AnswerSubmissionSchema = z.object({
   questionId: z.string(),
   response: z.string(),
   confidence: z.enum(["low", "medium", "high"]),
+  questionText: z.string().optional(),
+  questionType: z.enum(["mcq", "short_answer"]).optional(),
+  options: z.any().optional(),
+  answerKey: z.string().optional(),
+  explanation: z.string().optional(),
+  rubric: z.any().optional(),
+  topicId: z.string().optional(),
 });
 
 const EvaluateQuizRequestSchema = z.object({
@@ -64,6 +71,13 @@ export async function POST(request: Request) {
     const historicalAttemptsMap = new Map<string, Array<{ score: number; difficulty: number }>>();
 
     if (isLiveDb) {
+      if (new Set(submittedIds).size !== submittedIds.length) {
+        return NextResponse.json(
+          { error: "Each quiz question may be submitted only once." },
+          { status: 400 }
+        );
+      }
+
       const owned = await verifyQuizQuestionOwnership({ quizId, workspaceId, questionIds: submittedIds });
       if (!owned.ok) {
         return NextResponse.json({ error: owned.error }, { status: owned.status });
@@ -80,6 +94,32 @@ export async function POST(request: Request) {
         return NextResponse.json(
           { error: "This quiz has already been submitted.", alreadySubmitted: true },
           { status: 409 }
+        );
+      }
+
+      const { data: allQuizQuestions, error: allQuestionsError } = await admin
+        .from("quiz_questions")
+        .select("id")
+        .eq("quiz_id", quizId);
+
+      if (allQuestionsError) {
+        return NextResponse.json(
+          { error: "Failed to load quiz questions.", details: allQuestionsError.message },
+          { status: 500 }
+        );
+      }
+
+      const allQuestionIds = (allQuizQuestions || []).map((q) => q.id);
+      const submittedQuestionIds = new Set(submittedIds);
+      const missingQuestionIds = allQuestionIds.filter((id) => !submittedQuestionIds.has(id));
+
+      if (missingQuestionIds.length > 0) {
+        return NextResponse.json(
+          {
+            error: "Submit every question in the quiz before finalizing the assessment.",
+            missingQuestionIds,
+          },
+          { status: 400 }
         );
       }
 
@@ -121,35 +161,93 @@ export async function POST(request: Request) {
       if (topicIds.length > 0) {
         const { data: prevAnswers } = await admin
           .from("answers")
-          .select("quiz_id, topic_id, score, answered_at")
+          .select("quiz_id, quiz_question_id, topic_id, score, answered_at")
           .eq("user_id", userId)
           .in("topic_id", topicIds)
           .order("answered_at", { ascending: true });
 
         if (prevAnswers) {
+          const previousQuestionIds = Array.from(
+            new Set(
+              prevAnswers
+                .map((pa) => pa.quiz_question_id)
+                .filter((id): id is string => Boolean(id))
+            )
+          );
+          const difficultyMap = new Map<string, number>();
+
+          if (previousQuestionIds.length > 0) {
+            const { data: previousQuestions } = await admin
+              .from("quiz_questions")
+              .select("id, difficulty")
+              .in("id", previousQuestionIds);
+
+            for (const question of previousQuestions || []) {
+              difficultyMap.set(question.id, question.difficulty);
+            }
+          }
+
           for (const pa of prevAnswers) {
             // Exclude this quiz's own saved rows. A retry after a partial write
             // must rebuild from prior history, not double-count the retry.
             if (pa.quiz_id === quizId) continue;
             const list = historicalAttemptsMap.get(pa.topic_id) || [];
-            list.push({ score: pa.score ?? 0, difficulty: 2 });
+            list.push({
+              score: pa.score ?? 0,
+              difficulty: difficultyMap.get(pa.quiz_question_id) ?? 2,
+            });
             historicalAttemptsMap.set(pa.topic_id, list);
           }
         }
       }
     } else {
-      // Offline demo preview: only synthetic fixture records are used.
-      questions = DEMO_QUIZ_QUESTIONS.filter((q) => submittedIds.includes(q.id));
-      if (questions.length !== submittedIds.length) {
-        return NextResponse.json(
-          {
-            error:
-              "Offline demo mode only accepts questions from the synthetic demo quiz. Configure Supabase to grade real quizzes.",
-            isDemo: true,
-          },
-          { status: 400 }
-        );
+      // Offline mode: demo quiz only accepts fixture questions; dynamic preview quizzes accept generated questions
+      if (quizId === DEMO_QUIZ_QUESTIONS[0].quiz_id) {
+        questions = DEMO_QUIZ_QUESTIONS.filter((q) => submittedIds.includes(q.id));
+        if (questions.length !== submittedIds.length) {
+          const missing = submittedIds.filter((id) => !questions.some((q) => q.id === id));
+          return NextResponse.json(
+            {
+              error: `Submitted questions do not belong to this demo quiz: ${missing.join(", ")}`,
+              isDemo: true,
+            },
+            { status: 400 }
+          );
+        }
+      } else {
+        const demoMap = new Map(DEMO_QUIZ_QUESTIONS.map((q) => [q.id, q]));
+        questions = answers.map((a) => {
+          const found = demoMap.get(a.questionId);
+          if (found) return found;
+
+          return {
+            id: a.questionId,
+            quiz_id: quizId,
+            topic_id: a.topicId || (DEMO_TOPICS[0]?.id ?? "40000000-0000-0000-0000-000000000001"),
+            question_type: a.questionType || (a.options ? "mcq" : "short_answer"),
+            difficulty: 2,
+            question_text: a.questionText || "Conceptual assessment question",
+            options: a.options || null,
+            answer_key: a.answerKey || a.response,
+            explanation: a.explanation || "Evaluated according to course syllabus rubric.",
+            rubric: a.rubric || {
+              keypoints: [
+                { point: "Addresses primary concept", weight: 0.6 },
+                { point: "Provides accurate reasoning", weight: 0.4 },
+              ],
+            },
+            source_chunk_id: null,
+            citation_document_name: null,
+            citation_page_start: null,
+            citation_page_end: null,
+            citation_section: null,
+            citation_quote: null,
+            is_quote_verified: false,
+            created_at: new Date().toISOString(),
+          } as unknown as QuizQuestionRow;
+        });
       }
+
       for (const t of DEMO_TOPICS) {
         currentMasteryMap.set(t.id, t.current_mastery);
       }
@@ -232,7 +330,7 @@ export async function POST(request: Request) {
           .eq("topic_id", topicId)
           .eq("is_blind_spot", true);
 
-        await admin
+        const { error: topicUpdateError } = await admin
           .from("topics")
           .update({
             current_mastery: delta.current,
@@ -246,20 +344,51 @@ export async function POST(request: Request) {
           .eq("id", topicId)
           .eq("workspace_id", workspaceId);
 
-        await admin.from("mastery_snapshots").insert({
-          workspace_id: workspaceId,
-          topic_id: topicId,
-          user_id: userId,
-          quiz_id: quizId,
-          mastery_score: delta.current,
-          classification: delta.classification,
-          evidence_level: delta.evidenceLevel,
-          effective_attempts: delta.totalAttempts,
-          recorded_at: new Date().toISOString(),
-        });
+        if (topicUpdateError) {
+          return NextResponse.json(
+            { error: "Failed to update topic mastery.", details: topicUpdateError.message },
+            { status: 500 }
+          );
+        }
+
+        const { data: existingSnapshot, error: snapshotLookupError } = await admin
+          .from("mastery_snapshots")
+          .select("id")
+          .eq("workspace_id", workspaceId)
+          .eq("topic_id", topicId)
+          .eq("quiz_id", quizId)
+          .maybeSingle();
+
+        if (snapshotLookupError) {
+          return NextResponse.json(
+            { error: "Failed to check mastery history.", details: snapshotLookupError.message },
+            { status: 500 }
+          );
+        }
+
+        if (!existingSnapshot) {
+          const { error: snapshotInsertError } = await admin.from("mastery_snapshots").insert({
+            workspace_id: workspaceId,
+            topic_id: topicId,
+            user_id: userId,
+            quiz_id: quizId,
+            mastery_score: delta.current,
+            classification: delta.classification,
+            evidence_level: delta.evidenceLevel,
+            effective_attempts: delta.totalAttempts,
+            recorded_at: new Date().toISOString(),
+          });
+
+          if (snapshotInsertError) {
+            return NextResponse.json(
+              { error: "Failed to record mastery history.", details: snapshotInsertError.message },
+              { status: 500 }
+            );
+          }
+        }
       }
 
-      await admin
+      const { error: quizCompleteError } = await admin
         .from("quizzes")
         .update({
           is_completed: true,
@@ -269,6 +398,13 @@ export async function POST(request: Request) {
         })
         .eq("id", quizId)
         .eq("workspace_id", workspaceId);
+
+      if (quizCompleteError) {
+        return NextResponse.json(
+          { error: "Failed to finalize quiz submission.", details: quizCompleteError.message },
+          { status: 500 }
+        );
+      }
 
       // Automatic re-planning: preserve completed history, replace pending work.
       try {
@@ -356,16 +492,21 @@ export async function POST(request: Request) {
             topicMetadataMap: metadata,
           });
 
-          await admin
+          const { error: deleteTasksError } = await admin
             .from("revision_tasks")
             .delete()
             .eq("plan_id", planData.id)
             .eq("status", "pending");
 
+          if (deleteTasksError) {
+            throw new Error(`Failed to clear pending revision tasks: ${deleteTasksError.message}`);
+          }
+
           for (const day of updatedPlan.days) {
             for (const task of day.tasks) {
               if (task.status !== "pending") continue;
-              await admin.from("revision_tasks").insert({
+
+              const { error: taskInsertError } = await admin.from("revision_tasks").insert({
                 id: task.id,
                 plan_id: planData.id,
                 workspace_id: workspaceId,
@@ -381,10 +522,14 @@ export async function POST(request: Request) {
                 source_chunk_id: task.sourceChunkId,
                 citation_reference: task.citationReference,
               });
+
+              if (taskInsertError) {
+                throw new Error(`Failed to save refreshed revision task: ${taskInsertError.message}`);
+              }
             }
           }
 
-          await admin
+          const { error: planUpdateError } = await admin
             .from("revision_plans")
             .update({
               version: updatedPlan.version,
@@ -392,6 +537,10 @@ export async function POST(request: Request) {
               updated_at: new Date().toISOString(),
             })
             .eq("id", planData.id);
+
+          if (planUpdateError) {
+            throw new Error(`Failed to update refreshed revision plan: ${planUpdateError.message}`);
+          }
 
           planUpdated = true;
         }

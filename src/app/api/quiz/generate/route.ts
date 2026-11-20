@@ -55,25 +55,55 @@ export async function POST(request: Request) {
       if (topicIds && topicIds.length > 0) {
         topicQuery = topicQuery.in("id", topicIds);
       }
-      const { data: topicData } = await topicQuery;
+      const { data: topicData, error: topicError } = await topicQuery;
+      if (topicError) {
+        return NextResponse.json(
+          { error: "Failed to load workspace topics", details: topicError.message },
+          { status: 500 }
+        );
+      }
 
-      const { data: chunkData } = await admin
+      const { data: chunkData, error: chunkError } = await admin
         .from("document_chunks")
         .select("*")
         .eq("workspace_id", workspaceId);
+      if (chunkError) {
+        return NextResponse.json(
+          { error: "Failed to load indexed course chunks", details: chunkError.message },
+          { status: 500 }
+        );
+      }
 
-      if (topicData && topicData.length > 0) topics = topicData;
-      if (chunkData && chunkData.length > 0) chunks = chunkData;
+      topics = topicData || [];
+      chunks = chunkData || [];
+
+      if (topics.length === 0) {
+        return NextResponse.json(
+          { error: "No indexed topics are available for this workspace. Extract the syllabus first." },
+          { status: 422 }
+        );
+      }
+      if (chunks.length === 0) {
+        return NextResponse.json(
+          { error: "No indexed course material is available. Upload and process a syllabus or notes first." },
+          { status: 422 }
+        );
+      }
+    } else if (auth.isDemo) {
+      if (topics.length === 0) {
+        topics = topicIds && topicIds.length > 0
+          ? DEMO_TOPICS.filter((t) => topicIds.includes(t.id))
+          : DEMO_TOPICS;
+      }
+      if (chunks.length === 0) chunks = DEMO_CHUNKS;
+    } else {
+      return NextResponse.json(
+        { error: "No indexed topics or course material available. Extract syllabus and upload material first." },
+        { status: 422 }
+      );
     }
 
-    if (topics.length === 0) {
-      topics = topicIds && topicIds.length > 0
-        ? DEMO_TOPICS.filter((t) => topicIds.includes(t.id))
-        : DEMO_TOPICS;
-    }
-    if (chunks.length === 0) chunks = DEMO_CHUNKS;
-
-    const quizId = `quiz-${Date.now()}`;
+    const quizId = crypto.randomUUID();
     const generated: GeneratedQuestionResult[] = [];
     const questionsPerTopic = Math.max(1, Math.ceil(targetCount / topics.length));
 
@@ -108,6 +138,13 @@ export async function POST(request: Request) {
 
     // Fallback if no questions could be generated
     if (generated.length === 0) {
+      if (!auth.isDemo) {
+        return NextResponse.json(
+          { error: "Unable to generate grounded questions from the indexed course material." },
+          { status: 422 }
+        );
+      }
+
       for (const demoQ of DEMO_QUIZ_QUESTIONS.slice(0, targetCount)) {
         generated.push({
           id: demoQ.id,
@@ -132,7 +169,7 @@ export async function POST(request: Request) {
 
     // Persist quiz and questions if live DB
     if (isLiveDb) {
-      await admin.from("quizzes").insert({
+      const { error: quizInsertError } = await admin.from("quizzes").insert({
         id: quizId,
         workspace_id: workspaceId,
         user_id: auth.userId,
@@ -143,12 +180,18 @@ export async function POST(request: Request) {
         started_at: new Date().toISOString(),
       });
 
-      for (let i = 0; i < generated.length; i++) {
-        const q = generated[i];
-        const qId = `qq-${quizId}-${i + 1}`;
+      if (quizInsertError) {
+        return NextResponse.json(
+          { error: "Failed to save generated quiz", details: quizInsertError.message },
+          { status: 500 }
+        );
+      }
+
+      for (const q of generated) {
+        const qId = crypto.randomUUID();
         q.id = qId;
 
-        await admin.from("quiz_questions").insert({
+        const { error: questionInsertError } = await admin.from("quiz_questions").insert({
           id: qId,
           quiz_id: quizId,
           topic_id: q.topicId,
@@ -167,11 +210,19 @@ export async function POST(request: Request) {
           citation_quote: q.citationQuote,
           is_quote_verified: q.isQuoteVerified,
         });
+
+        if (questionInsertError) {
+          await admin.from("quizzes").delete().eq("id", quizId);
+          return NextResponse.json(
+            { error: "Failed to save generated questions", details: questionInsertError.message },
+            { status: 500 }
+          );
+        }
       }
     } else {
-      // Assign IDs in mock mode
-      generated.forEach((q, i) => {
-        q.id = q.id || `qq-${quizId}-${i + 1}`;
+      // Assign valid UUIDs in mock mode
+      generated.forEach((q) => {
+        q.id = q.id || crypto.randomUUID();
       });
     }
 

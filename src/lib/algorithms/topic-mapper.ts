@@ -404,6 +404,97 @@ export function computeTopicExamWeights(
 }
 
 /**
+ * Heuristic extractor for questions from past-paper documents.
+ * Recognizes question markers (e.g. "Q1", "Question 1", "1.", marks "[10 marks]", etc.).
+ */
+export function extractPastPaperQuestionsFromText(
+  text: string,
+  documentId: string,
+  workspaceId: string
+): PaperQuestionInput[] {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const questions: PaperQuestionInput[] = [];
+
+  let currentQNumber: string | null = null;
+  let currentQText: string[] = [];
+  let currentMarks = 10;
+  let qIndex = 1;
+
+  const flushCurrent = () => {
+    if (currentQNumber && currentQText.length > 0) {
+      const fullText = currentQText.join(" ").trim();
+      if (fullText.length >= 10) {
+        questions.push({
+          paperYear: null,
+          paperName: null,
+          questionNumber: currentQNumber,
+          questionText: fullText,
+          marks: currentMarks,
+          documentId,
+          workspaceId,
+        });
+      }
+    }
+    currentQNumber = null;
+    currentQText = [];
+    currentMarks = 10;
+  };
+
+  const questionHeaderRegex = /^(?:Question\s*([0-9IVX]+)|Q([0-9IVX]+)|([0-9]{1,2})\.)[:\.\s-]*(.*)/i;
+  const marksRegex = /(?:\[|\()([0-9]{1,2})\s*(?:marks?|pts?|points?)(?:\]|\))/i;
+
+  for (const line of lines) {
+    const match = line.match(questionHeaderRegex);
+    if (match) {
+      flushCurrent();
+      currentQNumber = match[1] || match[2] || match[3] || `Q${qIndex}`;
+      if (!currentQNumber.toUpperCase().startsWith("Q")) {
+        currentQNumber = `Q${currentQNumber}`;
+      }
+      qIndex++;
+
+      const marksMatch = line.match(marksRegex);
+      if (marksMatch) {
+        currentMarks = parseInt(marksMatch[1], 10) || 10;
+      }
+
+      const rest = match[4] ? match[4].replace(marksRegex, "").trim() : "";
+      if (rest) currentQText.push(rest);
+    } else if (currentQNumber) {
+      const marksMatch = line.match(marksRegex);
+      if (marksMatch) {
+        currentMarks = parseInt(marksMatch[1], 10) || currentMarks;
+      }
+      currentQText.push(line.replace(marksRegex, "").trim());
+    }
+  }
+
+  flushCurrent();
+
+  // If strict question markers were not found, chunk by substantial paragraphs
+  if (questions.length === 0) {
+    const paragraphs = text
+      .split(/\n\s*\n/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 30 && p.length < 800 && (p.includes("?") || p.toLowerCase().includes("explain") || p.toLowerCase().includes("describe") || p.toLowerCase().includes("calculate") || p.toLowerCase().includes("discuss")));
+
+    paragraphs.slice(0, 10).forEach((p, idx) => {
+      questions.push({
+        paperYear: null,
+        paperName: null,
+        questionNumber: `Q${idx + 1}`,
+        questionText: p,
+        marks: 10,
+        documentId,
+        workspaceId,
+      });
+    });
+  }
+
+  return questions;
+}
+
+/**
  * Builds a hierarchical topic tree structure from flat topic rows and prerequisites.
  */
 export function buildTopicTree(

@@ -73,4 +73,51 @@ describe("Unit: POST /api/documents/process", () => {
     const res = await POST(req);
     expect(res.status).toBe(400);
   });
+
+  it("should extract and index Markdown notes correctly without needs_ocr", async () => {
+    const mdContent = `# Process Synchronization\n\nPeterson's algorithm is a concurrent programming algorithm for mutual exclusion that allows two or more processes to share a single-use resource without conflict.\n\n## Hardware Support\n\nModern architectures require memory barriers or atomic hardware instructions like compare-and-swap.`;
+    const base64 = Buffer.from(mdContent).toString("base64");
+
+    const req = new Request("http://localhost:3000/api/documents/process", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        documentId: "20000000-0000-0000-0000-000000000002",
+        filename: "notes.md",
+        fileBase64: `data:text/markdown;base64,${base64}`,
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.status).toBe("indexed");
+    expect(data.chunkCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("should respect maxChunks limit when provided", async () => {
+    const samplePdfPath = path.join(process.cwd(), "tests", "fixtures", "sample-os-lecture.pdf");
+    const pdfBuffer = fs.readFileSync(samplePdfPath);
+    const fileBase64 = pdfBuffer.toString("base64");
+
+    const req = new Request("http://localhost:3000/api/documents/process", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        documentId: "20000000-0000-0000-0000-000000000003",
+        fileBase64,
+        maxChunks: 1,
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.chunkCount).toBe(1);
+    expect(data.chunks).toHaveLength(1);
+  });
 });

@@ -12,6 +12,7 @@ import { hybridSearch } from "@/lib/rag/hybrid-retrieval";
 import { embedText } from "@/lib/ai/gemini";
 import { DEMO_CHUNKS, DEMO_TOPICS } from "@/lib/demo/os-cs301-fixture";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import type { CopilotChatResponse } from "@/types/planner";
 
 const CopilotChatRequestSchema = z.object({
@@ -50,9 +51,27 @@ export async function POST(request: Request) {
     let candidateChunks: any[] = [];
     let topicTitle: string | undefined;
 
-    if (topicId && auth.isDemo) {
-      const foundTopic = DEMO_TOPICS.find((t) => t.id === topicId);
-      if (foundTopic) topicTitle = foundTopic.title;
+    if (topicId) {
+      if (auth.isDemo) {
+        const foundTopic = DEMO_TOPICS.find((t) => t.id === topicId);
+        if (foundTopic) topicTitle = foundTopic.title;
+      } else if (isSupabaseAdminConfigured()) {
+        const { data: topicData, error: topicError } = await getSupabaseAdmin()
+          .from("topics")
+          .select("title")
+          .eq("id", topicId)
+          .eq("workspace_id", workspaceId)
+          .maybeSingle();
+
+        if (topicError) {
+          return NextResponse.json(
+            { error: "Failed to load the selected topic", details: topicError.message },
+            { status: 500 }
+          );
+        }
+
+        if (topicData) topicTitle = topicData.title;
+      }
     }
 
     try {

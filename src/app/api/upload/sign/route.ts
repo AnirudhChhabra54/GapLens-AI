@@ -57,7 +57,7 @@ export async function POST(request: Request) {
     let uploadUrl: string;
     let documentId: string = crypto.randomUUID();
 
-    if (isSupabaseAdminConfigured()) {
+    if (isSupabaseAdminConfigured() && !auth.isDemo) {
       const admin = getSupabaseAdmin();
 
       // Generate signed upload URL from Supabase Storage private bucket 'documents'

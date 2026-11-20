@@ -33,19 +33,33 @@ export function mergeAssessmentIntoGapReport(
   });
 
   const assessed = updatedTopics.filter((topic) => topic.totalAttempts > 0);
-  const weighted = assessed.reduce(
-    (acc, topic) => acc + topic.masteryScore * (topic.examWeight > 0 ? topic.examWeight : 1),
-    0
-  );
-  const weightTotal = assessed.reduce(
-    (acc, topic) => acc + (topic.examWeight > 0 ? topic.examWeight : 1),
-    0
-  );
+  const assessedTopicsCount = assessed.length;
+  const totalTopicsCount = updatedTopics.length;
+  const coveragePercentage =
+    totalTopicsCount > 0
+      ? Number(((assessedTopicsCount / totalTopicsCount) * 100).toFixed(1))
+      : 0;
+
+  let weightedMasterySum = 0;
+  let totalAssessedWeight = 0;
+
+  for (const topic of assessed) {
+    const weight =
+      topic.examWeight > 0
+        ? topic.examWeight
+        : assessedTopicsCount > 0
+          ? 1.0 / assessedTopicsCount
+          : 0;
+    weightedMasterySum += topic.masteryScore * weight;
+    totalAssessedWeight += weight;
+  }
+
   const averageMastery =
-    weightTotal > 0 ? Number((weighted / weightTotal).toFixed(1)) : 0;
-  const readinessScore = Number(
-    ((prevReport.readiness.coveragePercentage / 100) * averageMastery).toFixed(1)
-  );
+    totalAssessedWeight > 0
+      ? Number((weightedMasterySum / totalAssessedWeight).toFixed(1))
+      : 0;
+  const readinessScore = Number(((coveragePercentage / 100) * averageMastery).toFixed(1));
+  const isDataSufficient = assessedTopicsCount >= 2;
 
   // Replace prior blind spots for every topic assessed in this submission.
   // A corrected retest removes the stale misconception; a new error adds one.
@@ -70,13 +84,27 @@ export function mergeAssessmentIntoGapReport(
     .map(([topicId, value]) => ({ topicId, ...value }))
     .sort((a, b) => b.blindSpotCount - a.blindSpotCount);
 
+  const urgentActions = mergedItems.slice(0, 5).map((item) => ({
+    topicId: item.topicId,
+    topicTitle: item.topicTitle,
+    remedyAction: item.remedyAction,
+    citation: item.citation,
+  }));
+
   return {
     ...prevReport,
     topics: updatedTopics,
     readiness: {
       ...prevReport.readiness,
-      averageMastery,
       readinessScore,
+      assessedTopicsCount,
+      totalTopicsCount,
+      coveragePercentage,
+      averageMastery,
+      isDataSufficient,
+      insufficiencyReason: isDataSufficient
+        ? undefined
+        : "Not enough assessment data. Complete diagnostic assessments on at least 2 topics to calibrate readiness.",
     },
     blindSpots: {
       ...prevReport.blindSpots,
@@ -84,5 +112,7 @@ export function mergeAssessmentIntoGapReport(
       highRiskTopics,
       items: mergedItems,
     },
+    urgentActions,
+    generatedAt: new Date().toISOString(),
   };
 }

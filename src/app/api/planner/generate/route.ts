@@ -50,17 +50,29 @@ export async function POST(request: Request) {
     let existingPlanId: string | null = null;
 
     if (isLiveDb) {
-      const { data: topicData } = await admin
+      const { data: topicData, error: topicError } = await admin
         .from("topics")
         .select("*")
         .eq("workspace_id", workspaceId);
+      if (topicError) {
+        return NextResponse.json(
+          { error: "Failed to load workspace topics", details: topicError.message },
+          { status: 500 }
+        );
+      }
 
-      const { data: prereqData } = await admin
+      const { data: prereqData, error: prereqError } = await admin
         .from("topic_prerequisites")
         .select("*")
         .eq("workspace_id", workspaceId);
+      if (prereqError) {
+        return NextResponse.json(
+          { error: "Failed to load topic prerequisites", details: prereqError.message },
+          { status: 500 }
+        );
+      }
 
-      const { data: planData } = await admin
+      const { data: planData, error: planError } = await admin
         .from("revision_plans")
         .select("id, version")
         .eq("workspace_id", workspaceId)
@@ -68,16 +80,34 @@ export async function POST(request: Request) {
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle();
+      if (planError) {
+        return NextResponse.json(
+          { error: "Failed to load active revision plan", details: planError.message },
+          { status: 500 }
+        );
+      }
 
       existingPlanId = planData?.id || null;
       existingPlanVersion = planData?.version || 0;
 
-      const { data: taskData } = planData
+      const { data: taskData, error: taskError } = planData
         ? await admin.from("revision_tasks").select("*").eq("plan_id", planData.id)
-        : { data: null };
+        : { data: null, error: null };
+      if (taskError) {
+        return NextResponse.json(
+          { error: "Failed to load revision tasks", details: taskError.message },
+          { status: 500 }
+        );
+      }
 
-      if (topicData && topicData.length > 0) topics = topicData;
-      if (prereqData) prerequisites = prereqData;
+      topics = topicData || [];
+      prerequisites = prereqData || [];
+      if (topics.length === 0) {
+        return NextResponse.json(
+          { error: "No indexed topics are available for this workspace. Extract the syllabus first." },
+          { status: 422 }
+        );
+      }
       if (taskData) {
         existingTasks = taskData.map((t) => ({
           id: t.id,
@@ -97,11 +127,9 @@ export async function POST(request: Request) {
           completedAt: t.completed_at,
         }));
       }
-    }
-
-    if (topics.length === 0) topics = DEMO_TOPICS;
-    if (prerequisites.length === 0) prerequisites = DEMO_PREREQUISITES;
-    if (existingTasks.length === 0) {
+    } else if (auth.isDemo) {
+      topics = DEMO_TOPICS;
+      prerequisites = DEMO_PREREQUISITES;
       existingTasks = DEMO_REVISION_TASKS.map((t) => ({
         id: t.id,
         planId: t.plan_id,
@@ -119,6 +147,22 @@ export async function POST(request: Request) {
         citationReference: t.citation_reference,
         completedAt: t.completed_at,
       }));
+    } else {
+      return NextResponse.json({
+        success: true,
+        id: crypto.randomUUID(),
+        workspaceId,
+        version: 1,
+        examDate: examDate || null,
+        dailyMinutes,
+        totalDays: 0,
+        totalAllocatedMinutes: 0,
+        totalAvailableMinutes: 0,
+        completedMinutes: 0,
+        isActive: true,
+        days: [],
+        deferredTasksCount: 0,
+      });
     }
 
     // Compute downstream dependents count per topic
@@ -152,7 +196,7 @@ export async function POST(request: Request) {
     }
 
     const planOverview: RevisionPlanOverview = generateRevisionPlan({
-      planId: existingPlanId || `plan-${workspaceId}`,
+      planId: existingPlanId || crypto.randomUUID(),
       version: existingPlanVersion + 1,
       workspaceId,
       prioritizedTopics,
@@ -165,7 +209,7 @@ export async function POST(request: Request) {
 
     if (isLiveDb) {
       // Upsert revision plan
-      await admin.from("revision_plans").upsert({
+      const { error: planUpsertError } = await admin.from("revision_plans").upsert({
         id: planOverview.id,
         workspace_id: workspaceId,
         user_id: auth.userId,
@@ -178,32 +222,53 @@ export async function POST(request: Request) {
         updated_at: new Date().toISOString(),
       });
 
+      if (planUpsertError) {
+        return NextResponse.json(
+          { error: "Failed to save revision plan", details: planUpsertError.message },
+          { status: 500 }
+        );
+      }
+
       // Replace pending tasks; completed/skipped history is preserved.
-      await admin
+      const { error: deleteTasksError } = await admin
         .from("revision_tasks")
         .delete()
         .eq("plan_id", planOverview.id)
         .eq("status", "pending");
 
+      if (deleteTasksError) {
+        return NextResponse.json(
+          { error: "Failed to replace pending revision tasks", details: deleteTasksError.message },
+          { status: 500 }
+        );
+      }
+
       for (const day of planOverview.days) {
         for (const task of day.tasks) {
-          if (task.status === "pending") {
-            await admin.from("revision_tasks").upsert({
-              id: task.id,
-              plan_id: planOverview.id,
-              workspace_id: workspaceId,
-              topic_id: task.topicId,
-              day_number: task.dayNumber,
-              task_order: task.taskOrder,
-              task_type: task.taskType,
-              title: task.title,
-              description: task.description,
-              allocated_minutes: task.allocatedMinutes,
-              priority_score: task.priorityScore,
-              status: task.status,
-              source_chunk_id: task.sourceChunkId,
-              citation_reference: task.citationReference,
-            });
+          if (task.status !== "pending") continue;
+
+          const { error: taskInsertError } = await admin.from("revision_tasks").insert({
+            id: task.id,
+            plan_id: planOverview.id,
+            workspace_id: workspaceId,
+            topic_id: task.topicId,
+            day_number: task.dayNumber,
+            task_order: task.taskOrder,
+            task_type: task.taskType,
+            title: task.title,
+            description: task.description,
+            allocated_minutes: task.allocatedMinutes,
+            priority_score: task.priorityScore,
+            status: task.status,
+            source_chunk_id: task.sourceChunkId,
+            citation_reference: task.citationReference,
+          });
+
+          if (taskInsertError) {
+            return NextResponse.json(
+              { error: "Failed to save revision tasks", details: taskInsertError.message },
+              { status: 500 }
+            );
           }
         }
       }

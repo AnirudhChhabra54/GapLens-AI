@@ -20,6 +20,7 @@ import type {
   WorkspaceRow,
   DocumentRow,
   TopicRow,
+  TopicPrerequisiteRow,
   MasteryClassification,
   EvidenceStrength,
 } from "@/types/database";
@@ -39,6 +40,7 @@ interface WorkspaceContextType {
   isDemo: boolean;
   documents: DocumentRow[];
   topics: TopicRow[];
+  prerequisites: TopicPrerequisiteRow[];
   gapReport: GapReportData;
   revisionSchedule: RevisionPlanOverview;
   dailyMinutes: number;
@@ -46,8 +48,11 @@ interface WorkspaceContextType {
   retestedTopicScores: Record<string, number>;
   storedAssessmentResults: AssessmentTopicResult[];
   loginAsDemo: () => void;
-  loginCustom: (email: string, name?: string) => void;
+  loginCustom: (email: string, name?: string) => Promise<void>;
   logout: () => void;
+  setWorkspaceTopics: (topics: TopicRow[]) => void;
+  setWorkspaceDocuments: (docs: DocumentRow[]) => void;
+  setWorkspacePrerequisites: (prereqs: TopicPrerequisiteRow[]) => void;
   setDailyMinutes: (mins: number) => void;
   toggleTaskCompletion: (taskId: string) => void;
   triggerRetestTopic: (topicId: string, simulatedScore: number) => void;
@@ -68,12 +73,13 @@ export function reconstructStateFromResults(params: {
   results: AssessmentTopicResult[];
   completedTaskIds: string[];
   dailyMinutes?: number;
+  prerequisites?: TopicPrerequisiteRow[];
 }): {
   nextTopics: TopicRow[];
   nextGapReport: GapReportData;
   nextSchedule: RevisionPlanOverview;
 } {
-  const { baseTopics, baseGapReport, baseSchedule, results, completedTaskIds, dailyMinutes } = params;
+  const { baseTopics, baseGapReport, baseSchedule, results, completedTaskIds, dailyMinutes, prerequisites } = params;
   if (!results || results.length === 0) {
     return { nextTopics: baseTopics, nextGapReport: baseGapReport, nextSchedule: baseSchedule };
   }
@@ -98,8 +104,9 @@ export function reconstructStateFromResults(params: {
 
   const nextGapReport = mergeAssessmentIntoGapReport(baseGapReport, results);
 
+  const activePrereqs = prerequisites || DEMO_PREREQUISITES;
   const dependentCounts = new Map<string, number>();
-  for (const p of DEMO_PREREQUISITES) {
+  for (const p of activePrereqs) {
     dependentCounts.set(
       p.prerequisite_topic_id,
       (dependentCounts.get(p.prerequisite_topic_id) || 0) + 1
@@ -150,6 +157,50 @@ export function reconstructStateFromResults(params: {
   return { nextTopics, nextGapReport, nextSchedule };
 }
 
+function createEmptyGapReport(workspace: WorkspaceRow): GapReportData {
+  return {
+    workspaceId: workspace.id,
+    workspaceTitle: workspace.title,
+    examDate: workspace.exam_date,
+    daysRemaining: null,
+    readiness: {
+      readinessScore: 0,
+      assessedTopicsCount: 0,
+      totalTopicsCount: 0,
+      coveragePercentage: 0,
+      averageMastery: 0,
+      isDataSufficient: false,
+      insufficiencyReason:
+        "Not enough assessment data. Upload course material and complete a diagnostic to calibrate readiness.",
+    },
+    blindSpots: {
+      totalBlindSpots: 0,
+      highRiskTopics: [],
+      items: [],
+    },
+    topics: [],
+    urgentActions: [],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function createEmptySchedule(workspace: WorkspaceRow): RevisionPlanOverview {
+  return {
+    id: crypto.randomUUID(),
+    workspaceId: workspace.id,
+    version: 1,
+    examDate: workspace.exam_date,
+    dailyMinutes: workspace.daily_study_minutes,
+    totalDays: 0,
+    totalAllocatedMinutes: 0,
+    totalAvailableMinutes: 0,
+    completedMinutes: 0,
+    isActive: true,
+    days: [],
+    deferredTasksCount: 0,
+  };
+}
+
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
@@ -163,6 +214,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [storedAssessmentResults, setStoredAssessmentResults] = useState<AssessmentTopicResult[]>([]);
   const [documents, setDocuments] = useState<DocumentRow[]>(DEMO_DOCUMENTS);
   const [topics, setTopics] = useState<TopicRow[]>(DEMO_TOPICS);
+  const [prerequisites, setPrerequisites] = useState<TopicPrerequisiteRow[]>(DEMO_PREREQUISITES);
   const [gapReport, setGapReport] = useState<GapReportData>(CLIENT_DEMO_GAP_REPORT);
   const [revisionSchedule, setRevisionSchedule] = useState<RevisionPlanOverview>(DEMO_REVISION_SCHEDULE);
 
@@ -173,10 +225,51 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         const storedAuth = localStorage.getItem("gaplens_auth_state");
         if (storedAuth) {
           const parsed = JSON.parse(storedAuth);
+          const restoredIsDemo = parsed.isDemo ?? true;
+          const restoredWorkspace = parsed.workspace || DEMO_WORKSPACE;
           setIsLoggedIn(parsed.isLoggedIn ?? true);
-          setIsDemo(parsed.isDemo ?? true);
+          setIsDemo(restoredIsDemo);
           if (parsed.profile) setProfile(parsed.profile);
-          if (parsed.workspace) setWorkspace(parsed.workspace);
+          setWorkspace(restoredWorkspace);
+
+          if (!restoredIsDemo) {
+            const restoredDocs: DocumentRow[] = Array.isArray(parsed.documents) ? parsed.documents : [];
+            const restoredTopics: TopicRow[] = Array.isArray(parsed.topics) ? parsed.topics : [];
+            const restoredPrereqs: TopicPrerequisiteRow[] = Array.isArray(parsed.prerequisites) ? parsed.prerequisites : [];
+
+            setDocuments(restoredDocs);
+            setTopics(restoredTopics);
+            setPrerequisites(restoredPrereqs);
+            setGapReport(createEmptyGapReport(restoredWorkspace));
+            setRevisionSchedule(createEmptySchedule(restoredWorkspace));
+
+            // Hydrate from live Supabase if credentials and session exist
+            supabase
+              .from("documents")
+              .select("*")
+              .eq("workspace_id", restoredWorkspace.id)
+              .then(({ data }) => {
+                if (data && data.length > 0) setDocuments(data as DocumentRow[]);
+              });
+
+            supabase
+              .from("topics")
+              .select("*")
+              .eq("workspace_id", restoredWorkspace.id)
+              .order("order_index", { ascending: true })
+              .then(({ data }) => {
+                if (data && data.length > 0) setTopics(data as TopicRow[]);
+              });
+
+            supabase
+              .from("topic_prerequisites")
+              .select("*")
+              .eq("workspace_id", restoredWorkspace.id)
+              .then(({ data }) => {
+                if (data && data.length > 0) setPrerequisites(data as TopicPrerequisiteRow[]);
+              });
+          }
+
           if (parsed.dailyMinutes) setDailyMinutesState(parsed.dailyMinutes);
           const restoredTasks: string[] = Array.isArray(parsed.completedTasks) ? parsed.completedTasks : [];
           setCompletedTaskIds(restoredTasks);
@@ -200,7 +293,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
             });
           }
 
-          if (resultsToApply.length > 0) {
+          if (restoredIsDemo && resultsToApply.length > 0) {
             const restored = reconstructStateFromResults({
               baseTopics: DEMO_TOPICS,
               baseGapReport: CLIENT_DEMO_GAP_REPORT,
@@ -208,10 +301,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
               results: resultsToApply,
               completedTaskIds: restoredTasks,
               dailyMinutes: parsed.dailyMinutes,
+              prerequisites: DEMO_PREREQUISITES,
             });
             setTopics(restored.nextTopics);
             setGapReport(restored.nextGapReport);
             setRevisionSchedule(restored.nextSchedule);
+          }
+
+          if (resultsToApply.length > 0) {
             setStoredAssessmentResults(resultsToApply);
           }
         }
@@ -231,6 +328,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     completedTasks: string[];
     retestedTopicScores: Record<string, number>;
     storedAssessmentResults: AssessmentTopicResult[];
+    documents: DocumentRow[];
+    topics: TopicRow[];
+    prerequisites: TopicPrerequisiteRow[];
   }>) => {
     if (typeof window !== "undefined") {
       try {
@@ -243,6 +343,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           completedTasks: completedTaskIds,
           retestedTopicScores,
           storedAssessmentResults,
+          documents: isDemo ? [] : documents,
+          topics: isDemo ? [] : topics,
+          prerequisites: isDemo ? [] : prerequisites,
           ...updates,
         };
         localStorage.setItem("gaplens_auth_state", JSON.stringify(current));
@@ -263,6 +366,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setStoredAssessmentResults([]);
     setDocuments(DEMO_DOCUMENTS);
     setTopics(DEMO_TOPICS);
+    setPrerequisites(DEMO_PREREQUISITES);
     setGapReport(CLIENT_DEMO_GAP_REPORT);
     setRevisionSchedule(DEMO_REVISION_SCHEDULE);
     saveState({
@@ -274,40 +378,141 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       completedTasks: [],
       retestedTopicScores: {},
       storedAssessmentResults: [],
+      documents: [],
+      topics: [],
+      prerequisites: [],
     });
   };
 
-  const loginCustom = (email: string, name?: string) => {
-    const isInterviewer =
-      email.toLowerCase().includes("interview") ||
-      email.toLowerCase().includes("judge") ||
-      email.toLowerCase().includes("gaplens");
-    const customProfile: ProfileRow = {
-      id: isInterviewer ? "00000000-0000-0000-0000-000000000002" : "custom-" + Date.now(),
-      email,
-      full_name: name || (isInterviewer ? "Interviewer / Hackathon Judge" : email.split("@")[0]),
+  const loginCustom = async (email: string, name?: string) => {
+    let user: { id: string; email?: string } | null = null;
+    try {
+      const { data } = await supabase.auth.getUser();
+      user = data?.user || null;
+    } catch {
+      // offline / mock mode
+    }
+
+    const userId = user?.id || crypto.randomUUID();
+    const resolvedEmail = user?.email || email;
+
+    let customProfile: ProfileRow = {
+      id: userId,
+      email: resolvedEmail,
+      full_name: name || resolvedEmail.split("@")[0],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    const customWorkspace: WorkspaceRow = {
-      id: DEMO_WORKSPACE.id,
-      user_id: customProfile.id,
-      title: DEMO_WORKSPACE.title,
-      description: DEMO_WORKSPACE.description,
-      exam_date: DEMO_WORKSPACE.exam_date,
+
+    let customWorkspace: WorkspaceRow = {
+      id: crypto.randomUUID(),
+      user_id: userId,
+      title: "My Course Workspace",
+      description: null,
+      exam_date: null,
       daily_study_minutes: 60,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+
+    let initialDocs: DocumentRow[] = [];
+    let initialTopics: TopicRow[] = [];
+    let initialPrereqs: TopicPrerequisiteRow[] = [];
+
+    if (user) {
+      try {
+        const { data: existingProfile } = (await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
+          .maybeSingle()) as any;
+
+        if (existingProfile) {
+          customProfile = existingProfile as ProfileRow;
+        } else {
+          const { data: createdProfile } = (await supabase
+            .from("profiles")
+            .insert({
+              id: user.id,
+              email: resolvedEmail,
+              full_name: name || resolvedEmail.split("@")[0],
+            } as any)
+            .select()
+            .single()) as any;
+
+          if (createdProfile) {
+            customProfile = createdProfile as ProfileRow;
+          }
+        }
+
+        const { data: existingWorkspace } = (await supabase
+          .from("workspaces")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle()) as any;
+
+        if (existingWorkspace) {
+          customWorkspace = existingWorkspace as WorkspaceRow;
+
+          const { data: dbDocs } = await supabase.from("documents").select("*").eq("workspace_id", customWorkspace.id);
+          const { data: dbTopics } = await supabase.from("topics").select("*").eq("workspace_id", customWorkspace.id).order("order_index", { ascending: true });
+          const { data: dbPrereqs } = await supabase.from("topic_prerequisites").select("*").eq("workspace_id", customWorkspace.id);
+
+          if (dbDocs) initialDocs = dbDocs as DocumentRow[];
+          if (dbTopics) initialTopics = dbTopics as TopicRow[];
+          if (dbPrereqs) initialPrereqs = dbPrereqs as TopicPrerequisiteRow[];
+        } else {
+          const { data: createdWorkspace } = (await supabase
+            .from("workspaces")
+            .insert({
+              user_id: user.id,
+              title: "My Course Workspace",
+              description: null,
+              exam_date: null,
+              daily_study_minutes: 60,
+            } as any)
+            .select()
+            .single()) as any;
+
+          if (createdWorkspace) {
+            customWorkspace = createdWorkspace as WorkspaceRow;
+          }
+        }
+      } catch (dbErr) {
+        console.warn("[WorkspaceContext] DB sync notice:", dbErr);
+      }
+    }
+
+    const emptyReport = createEmptyGapReport(customWorkspace);
+    const emptySchedule = createEmptySchedule(customWorkspace);
+
     setProfile(customProfile);
     setWorkspace(customWorkspace);
     setIsLoggedIn(true);
     setIsDemo(false);
+    setCompletedTaskIds([]);
+    setRetestedTopicScores({});
+    setStoredAssessmentResults([]);
+    setDocuments(initialDocs);
+    setTopics(initialTopics);
+    setPrerequisites(initialPrereqs);
+    setGapReport(emptyReport);
+    setRevisionSchedule(emptySchedule);
+
     saveState({
       isLoggedIn: true,
       isDemo: false,
       profile: customProfile,
       workspace: customWorkspace,
+      dailyMinutes: customWorkspace.daily_study_minutes,
+      completedTasks: [],
+      retestedTopicScores: {},
+      storedAssessmentResults: [],
+      documents: initialDocs,
+      topics: initialTopics,
+      prerequisites: initialPrereqs,
     });
   };
 
@@ -338,7 +543,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const buildPriorities = (nextTopics: TopicRow[]): TopicPriorityFactors[] => {
     const dependentCounts = new Map<string, number>();
-    for (const p of DEMO_PREREQUISITES) {
+    const activePrereqs = isDemo ? DEMO_PREREQUISITES : prerequisites;
+    for (const p of activePrereqs) {
       dependentCounts.set(
         p.prerequisite_topic_id,
         (dependentCounts.get(p.prerequisite_topic_id) || 0) + 1
@@ -397,6 +603,42 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     return nextPlan;
   };
 
+  const setWorkspaceTopics = (newTopics: TopicRow[]) => {
+    setTopics(newTopics);
+    saveState({ topics: newTopics });
+    setGapReport((prev) => ({
+      ...prev,
+      topics: newTopics.map((t) => ({
+        topicId: t.id,
+        topicTitle: t.title,
+        unitModule: t.unit_module || null,
+        masteryScore: t.current_mastery ?? 45.0,
+        classification: t.classification || "unassessed",
+        evidenceLevel: t.evidence_level || "early_signal",
+        totalAttempts: t.total_attempts ?? 0,
+        correctAttempts: t.correct_attempts ?? 0,
+        blindSpotCount: t.blind_spot_count ?? 0,
+        examWeight: t.exam_weight ?? 0.0,
+        examFrequency: t.exam_frequency ?? 0,
+        lastAttemptAt: null,
+      })),
+      readiness: {
+        ...prev.readiness,
+        totalTopicsCount: newTopics.length,
+      },
+    }));
+  };
+
+  const setWorkspaceDocuments = (newDocs: DocumentRow[]) => {
+    setDocuments(newDocs);
+    saveState({ documents: newDocs });
+  };
+
+  const setWorkspacePrerequisites = (newPrereqs: TopicPrerequisiteRow[]) => {
+    setPrerequisites(newPrereqs);
+    saveState({ prerequisites: newPrereqs });
+  };
+
   const applyAssessmentResults = (results: AssessmentTopicResult[]) => {
     if (results.length === 0) return;
 
@@ -407,12 +649,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const combinedResults = Array.from(combinedResultsMap.values());
 
     const updated = reconstructStateFromResults({
-      baseTopics: DEMO_TOPICS,
-      baseGapReport: CLIENT_DEMO_GAP_REPORT,
-      baseSchedule: DEMO_REVISION_SCHEDULE,
+      baseTopics: isDemo ? DEMO_TOPICS : topics,
+      baseGapReport: isDemo ? CLIENT_DEMO_GAP_REPORT : gapReport,
+      baseSchedule: isDemo ? DEMO_REVISION_SCHEDULE : revisionSchedule,
       results: combinedResults,
       completedTaskIds,
       dailyMinutes,
+      prerequisites: isDemo ? DEMO_PREREQUISITES : prerequisites,
     });
 
     setTopics(updated.nextTopics);
@@ -453,6 +696,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         isDemo,
         documents,
         topics,
+        prerequisites,
         gapReport,
         revisionSchedule,
         dailyMinutes,
@@ -462,6 +706,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         loginAsDemo,
         loginCustom,
         logout,
+        setWorkspaceTopics,
+        setWorkspaceDocuments,
+        setWorkspacePrerequisites,
         setDailyMinutes,
         toggleTaskCompletion,
         triggerRetestTopic,

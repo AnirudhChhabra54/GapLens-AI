@@ -1,51 +1,50 @@
 "use client";
 
 // ==============================================================================
-// GapLens AI — Screen 1: Authentication & 1-Click Judge Demo Fast Track
+// GapLens AI — Authentication & Demo Gateway
 // File: src/app/login/page.tsx
-// Redesigned: Dark obsidian (#080D0C), emerald/mint lighting (#00D6A0, #B7FFE8),
-// hairline borders, telemetry labels, and instant evaluation fast-track.
+// Supports Sign In, Create Account, and 1-Click Demo Workspace access.
+// Light-first editorial styling with warm ivory canvas and clean form controls.
 // ==============================================================================
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Sparkles,
-  Zap,
   Mail,
   Lock,
   User,
+  Eye,
+  EyeOff,
   ArrowRight,
-  ShieldCheck,
-  CheckCircle2,
-  Database,
-  Layers,
-  FileCheck,
   ChevronLeft,
+  AlertCircle,
 } from "lucide-react";
 import { useWorkspace } from "@/components/workspace-context";
 import { supabase } from "@/lib/supabase/client";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { loginAsDemo, loginCustom } = useWorkspace();
+  const { loginCustom, loginAsDemo } = useWorkspace();
   const [tab, setTab] = useState<"signin" | "signup">("signin");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handle1ClickJudgeDemo = () => {
-    setLoading(true);
-    loginAsDemo();
-    setTimeout(() => {
-      router.push("/dashboard");
-    }, 150);
-  };
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("mode") === "signup") {
+        setTab("signup");
+      }
+    }
+  }, []);
 
-  const handleCustomSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim() || !password.trim()) {
       setError("Please provide both email and password.");
@@ -56,16 +55,21 @@ export default function LoginPage() {
 
     try {
       if (tab === "signup") {
-        const { error: authError } = await supabase.auth.signUp({
+        const { data: signUpData, error: authError } = await supabase.auth.signUp({
           email: email.trim(),
           password: password.trim(),
           options: {
             data: { full_name: name.trim() || email.split("@")[0] },
           },
         });
+
         if (authError) {
           setError(authError.message);
-          setLoading(false);
+          return;
+        }
+
+        if (!signUpData.session) {
+          setError("Account created. Check your email to confirm it, then sign in.");
           return;
         }
       } else {
@@ -73,122 +77,96 @@ export default function LoginPage() {
           email: email.trim(),
           password: password.trim(),
         });
+
         if (authError) {
           setError(authError.message);
-          setLoading(false);
           return;
         }
       }
-    } catch (err) {
-      console.warn("[Supabase Auth] Fallback notice:", err);
-    }
 
-    loginCustom(email.trim(), name.trim());
-    setTimeout(() => {
+      await loginCustom(email.trim(), name.trim());
       router.push("/dashboard");
-    }, 150);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Authentication failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-[#080D0C] text-[#F1F7F4] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
-      {/* Background ambient lighting */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[650px] h-[350px] bg-[#00D6A0]/[0.04] rounded-full blur-[140px] pointer-events-none" />
-
-      <div className="sm:mx-auto sm:w-full sm:max-w-md text-center space-y-2">
-        <div className="inline-flex items-center gap-2 font-mono text-[11px] tracking-wider text-[#00D6A0] mb-1">
-          <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#00D6A0] animate-pulse" />
-          <span>[ SYSTEM 01 / AUTHENTICATION GATEWAY ]</span>
-        </div>
-
-        <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-[#F1F7F4]">
-          Sign In to{" "}
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#F1F7F4] via-[#B7FFE8] to-[#00D6A0]">
-            GapLens AI
-          </span>
-        </h2>
-        <p className="text-xs sm:text-sm text-[#A0ADA6]">
-          See the gaps. Master what matters.
-        </p>
-      </div>
-
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md space-y-6">
-        {/* =========================================================================
-            JUDGE ACCELERATION: 1-CLICK DEMO CARD
-            ========================================================================= */}
-        <div className="rounded-2xl border border-[#00D6A0]/40 bg-[#0D1512]/95 p-6 shadow-2xl backdrop-blur-xl relative overflow-hidden">
-          <div className="absolute top-0 right-0 rounded-bl-xl bg-[#00D6A0] px-3 py-0.5 text-[10px] font-mono font-bold uppercase tracking-wider text-[#080D0C]">
-            Judge Recommended
-          </div>
-
-          <div className="flex items-center gap-3 mb-3.5">
-            <span className="p-2 rounded-xl bg-[#00D6A0]/10 border border-[#00D6A0]/30 text-[#00D6A0]">
-              <Zap className="h-5 w-5 text-[#00D6A0] fill-[#00D6A0]" />
+    <div className="min-h-[calc(100vh-4rem)] bg-canvas flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
+      <div className="sm:mx-auto sm:w-full sm:max-w-md">
+        {/* Brand Header */}
+        <div className="text-center space-y-2 mb-6">
+          <Link href="/" className="inline-flex items-center gap-2.5">
+            <div className="h-8 w-8 rounded-control bg-accent flex items-center justify-center text-white shadow-subtle">
+              <Sparkles className="h-4 w-4" />
+            </div>
+            <span className="font-semibold text-xl tracking-tight text-brandText-primary">
+              GapLens AI
             </span>
-            <div>
-              <h3 className="text-sm font-bold text-[#F1F7F4]">1-Click Judge Demo Fast Track</h3>
-              <p className="text-[11px] text-[#00D6A0] font-mono">0-Latency Instant Evaluation</p>
-            </div>
-          </div>
-
-          <p className="text-xs text-[#A0ADA6] leading-relaxed mb-4">
-            Pre-seeded with real Operating Systems (CS-301) course: 10 syllabus topics, 24 textbook chunks, diagnostic quizzes, historical attempts, and knapsack revision plan.
+          </Link>
+          <h1 className="text-2xl font-semibold tracking-tight text-brandText-primary pt-2">
+            {tab === "signup" ? "Create your account" : "Sign in to workspace"}
+          </h1>
+          <p className="text-sm text-brandText-secondary">
+            {tab === "signup"
+              ? "Register to start diagnosing and mastering course gaps."
+              : "Access your course maps, diagnostics, and study plan."}
           </p>
-
-          <div className="grid grid-cols-2 gap-2 text-[11px] font-mono text-[#A0ADA6] mb-5 bg-[#080D0C]/80 p-3 rounded-xl border border-[#B7FFE8]/[0.08]">
-            <div className="flex items-center gap-1.5">
-              <CheckCircle2 className="h-3.5 w-3.5 text-[#00D6A0]" />
-              <span className="truncate">demo@gapfinder.ai</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Database className="h-3.5 w-3.5 text-[#00D6A0]" />
-              <span>13 DB Tables</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Layers className="h-3.5 w-3.5 text-[#00D6A0]" />
-              <span>OS CS-301 Syllabus</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <FileCheck className="h-3.5 w-3.5 text-[#00D6A0]" />
-              <span>Verified Citations</span>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={handle1ClickJudgeDemo}
-            disabled={loading}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#00D6A0] hover:bg-[#00D6A0]/90 px-4 py-3 text-xs font-mono font-bold text-[#080D0C] shadow-lg shadow-[#00D6A0]/25 transition-all transform active:scale-[0.98]"
-          >
-            <Zap className="h-4 w-4 fill-current" />
-            <span>Launch 1-Click Judge Demo</span>
-            <ArrowRight className="h-4 w-4" />
-          </button>
         </div>
 
-        {/* =========================================================================
-            STANDARD AUTH FORM
-            ========================================================================= */}
-        <div className="rounded-2xl border border-[#B7FFE8]/[0.08] bg-[#0D1512]/90 p-6 shadow-xl backdrop-blur-md space-y-4">
-          {/* Tabs */}
-          <div className="flex rounded-xl bg-[#080D0C] p-1 border border-[#B7FFE8]/[0.08]">
+        {/* Authentication Card */}
+        <div className="rounded-panel border border-brandBorder bg-surface p-6 sm:p-8 shadow-card space-y-5">
+          {/* Instant 1-Click Demo Entry */}
+          <div>
             <button
               type="button"
-              onClick={() => setTab("signin")}
-              className={`flex-1 rounded-lg py-1.5 text-xs font-mono font-semibold transition ${
+              onClick={() => {
+                loginAsDemo();
+                router.push("/dashboard");
+              }}
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-control bg-accent hover:bg-accent-hover text-white text-sm font-semibold shadow-subtle transition-all"
+            >
+              <span>Explore Demo Workspace (No Login Required)</span>
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="relative flex py-1 items-center">
+            <div className="flex-grow border-t border-brandBorder"></div>
+            <span className="flex-shrink mx-3 text-xs text-brandText-muted font-mono uppercase">
+              or continue below
+            </span>
+            <div className="flex-grow border-t border-brandBorder"></div>
+          </div>
+
+          {/* Tab Switcher: Sign In vs Create Account */}
+          <div className="flex p-1 rounded-control bg-surface-subtle border border-brandBorder text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                setTab("signin");
+                setError(null);
+              }}
+              className={`flex-1 py-1.5 rounded-control font-medium transition-colors ${
                 tab === "signin"
-                  ? "bg-[#17231D] text-[#00D6A0] border border-[#00D6A0]/30 shadow-sm"
-                  : "text-[#A0ADA6] hover:text-[#F1F7F4]"
+                  ? "bg-surface text-brandText-primary shadow-xs border border-brandBorder font-semibold"
+                  : "text-brandText-muted hover:text-brandText-primary border border-transparent"
               }`}
             >
               Sign In
             </button>
             <button
               type="button"
-              onClick={() => setTab("signup")}
-              className={`flex-1 rounded-lg py-1.5 text-xs font-mono font-semibold transition ${
+              onClick={() => {
+                setTab("signup");
+                setError(null);
+              }}
+              className={`flex-1 py-1.5 rounded-control font-medium transition-colors ${
                 tab === "signup"
-                  ? "bg-[#17231D] text-[#00D6A0] border border-[#00D6A0]/30 shadow-sm"
-                  : "text-[#A0ADA6] hover:text-[#F1F7F4]"
+                  ? "bg-surface text-brandText-primary shadow-xs border border-brandBorder font-semibold"
+                  : "text-brandText-muted hover:text-brandText-primary border border-transparent"
               }`}
             >
               Create Account
@@ -196,80 +174,136 @@ export default function LoginPage() {
           </div>
 
           {error && (
-            <div className="rounded-xl bg-[#F87171]/10 border border-[#F87171]/40 p-3 text-xs text-[#F87171]">
-              {error}
+            <div
+              role="alert"
+              className="flex items-start gap-2.5 rounded-card bg-status-dangerSoft border border-[#E4C9C7] p-3 text-xs text-status-danger"
+            >
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>{error}</span>
             </div>
           )}
 
-          <form onSubmit={handleCustomSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Name Field (Sign Up only) */}
             {tab === "signup" && (
               <div>
-                <label className="block text-xs font-mono text-[#A0ADA6] mb-1">
+                <label className="block text-xs font-semibold text-brandText-primary mb-1.5">
                   Full Name
                 </label>
                 <div className="relative">
-                  <User className="absolute left-3.5 top-3 h-4 w-4 text-[#6D7C74]" />
+                  <User className="absolute left-3 top-2.5 h-4 w-4 text-brandText-muted" />
                   <input
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="Alex Chen"
-                    className="w-full rounded-xl border border-[#B7FFE8]/[0.1] bg-[#080D0C] pl-10 pr-3.5 py-2.5 text-xs text-[#F1F7F4] placeholder-[#6D7C74] focus:outline-none focus:border-[#00D6A0] focus:ring-1 focus:ring-[#00D6A0] transition"
+                    className="w-full rounded-control border border-brandBorder bg-surface pl-9 pr-3.5 py-2 text-sm text-brandText-primary placeholder:text-brandText-muted focus:border-accent focus:ring-1 focus:ring-accent outline-none transition-colors"
                   />
                 </div>
               </div>
             )}
 
+            {/* Email Field */}
             <div>
-              <label className="block text-xs font-mono text-[#A0ADA6] mb-1">
-                Student Email
+              <label className="block text-xs font-semibold text-brandText-primary mb-1.5">
+                Email Address
               </label>
               <div className="relative">
-                <Mail className="absolute left-3.5 top-3 h-4 w-4 text-[#6D7C74]" />
+                <Mail className="absolute left-3 top-2.5 h-4 w-4 text-brandText-muted" />
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="student@university.edu"
                   required
-                  className="w-full rounded-xl border border-[#B7FFE8]/[0.1] bg-[#080D0C] pl-10 pr-3.5 py-2.5 text-xs text-[#F1F7F4] placeholder-[#6D7C74] focus:outline-none focus:border-[#00D6A0] focus:ring-1 focus:ring-[#00D6A0] transition"
+                  autoFocus={tab === "signin"}
+                  className="w-full rounded-control border border-brandBorder bg-surface pl-9 pr-3.5 py-2 text-sm text-brandText-primary placeholder:text-brandText-muted focus:border-accent focus:ring-1 focus:ring-accent outline-none transition-colors"
                 />
               </div>
             </div>
 
+            {/* Password Field */}
             <div>
-              <label className="block text-xs font-mono text-[#A0ADA6] mb-1">
+              <label className="block text-xs font-semibold text-brandText-primary mb-1.5">
                 Password
               </label>
               <div className="relative">
-                <Lock className="absolute left-3.5 top-3 h-4 w-4 text-[#6D7C74]" />
+                <Lock className="absolute left-3 top-2.5 h-4 w-4 text-brandText-muted" />
                 <input
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••••••"
                   required
-                  className="w-full rounded-xl border border-[#B7FFE8]/[0.1] bg-[#080D0C] pl-10 pr-3.5 py-2.5 text-xs text-[#F1F7F4] placeholder-[#6D7C74] focus:outline-none focus:border-[#00D6A0] focus:ring-1 focus:ring-[#00D6A0] transition"
+                  className="w-full rounded-control border border-brandBorder bg-surface pl-9 pr-10 py-2 text-sm text-brandText-primary placeholder:text-brandText-muted focus:border-accent focus:ring-1 focus:ring-accent outline-none transition-colors"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-2.5 text-brandText-muted hover:text-brandText-secondary"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
               </div>
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-xl bg-[#17231D] hover:bg-[#1f2f27] text-[#F1F7F4] border border-[#B7FFE8]/[0.15] font-mono font-semibold py-2.5 text-xs transition"
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-control bg-accent hover:bg-accent-hover text-white text-sm font-semibold shadow-subtle transition-all disabled:opacity-50 disabled:pointer-events-none mt-2"
             >
-              {tab === "signin" ? "Sign In to Workspace" : "Register New Account"}
+              {loading ? (
+                <span>{tab === "signup" ? "Creating account..." : "Signing in..."}</span>
+              ) : (
+                <>
+                  <span>{tab === "signup" ? "Create Account" : "Sign in to workspace"}</span>
+                  <ArrowRight className="h-4 w-4" />
+                </>
+              )}
             </button>
           </form>
 
-          <div className="pt-2 text-center">
+          {/* Toggle between modes */}
+          <div className="pt-2 text-center text-xs text-brandText-secondary">
+            {tab === "signup" ? (
+              <span>
+                Already have an account?{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTab("signin");
+                    setError(null);
+                  }}
+                  className="font-semibold text-accent hover:underline"
+                >
+                  Sign in
+                </button>
+              </span>
+            ) : (
+              <span>
+                Don&apos;t have an account?{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTab("signup");
+                    setError(null);
+                  }}
+                  className="font-semibold text-accent hover:underline"
+                >
+                  Create account
+                </button>
+              </span>
+            )}
+          </div>
+
+          <div className="pt-2 text-center border-t border-brandBorder">
             <Link
               href="/"
-              className="text-xs font-mono text-[#A0ADA6] hover:text-[#00D6A0] transition inline-flex items-center gap-1"
+              className="text-xs text-brandText-secondary hover:text-accent font-medium inline-flex items-center gap-1 transition-colors"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
-              <span>Back to Overview Landing</span>
+              <span>Back to overview</span>
             </Link>
           </div>
         </div>

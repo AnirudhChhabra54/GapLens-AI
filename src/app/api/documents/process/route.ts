@@ -11,12 +11,22 @@ import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admi
 import { authorizeWorkspace } from "@/lib/supabase/auth";
 import { parsePdfBuffer } from "@/lib/rag/pdf-parser";
 import { chunkExtractedPages } from "@/lib/rag/chunker";
-import { embedBatch, EMBEDDING_MODEL_NAME, TARGET_EMBEDDING_DIMENSIONS } from "@/lib/ai/gemini";
-import type { DocumentStatus, DocumentChunkRow } from "@/types/database";
+import {
+  embedBatch,
+  EMBEDDING_MODEL_NAME,
+  TARGET_EMBEDDING_DIMENSIONS,
+  generateDeterministic768dEmbedding,
+} from "@/lib/ai/gemini";
+import type { DocumentStatus, DocumentChunkRow, DocumentType } from "@/types/database";
+
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50MB
 
 const ProcessDocumentRequestSchema = z.object({
   documentId: z.string().uuid("Invalid document ID"),
+  workspaceId: z.string().uuid("Invalid workspace ID").optional(),
+  filename: z.string().optional(),
   fileBase64: z.string().optional(),
+  docType: z.enum(["syllabus", "material", "past_paper"]).optional(),
   indexVersion: z.number().int().min(1).default(1),
   maxChunks: z.number().int().positive().optional(),
 });
@@ -33,14 +43,24 @@ export async function POST(request: Request) {
       );
     }
 
-    const { documentId, fileBase64, indexVersion } = parsed.data;
+    const {
+      documentId,
+      workspaceId: clientWorkspaceId,
+      filename: clientFilename,
+      fileBase64,
+      docType: clientDocType,
+      indexVersion,
+      maxChunks,
+    } = parsed.data;
+
     const isLiveDb = isSupabaseAdminConfigured();
     const admin = getSupabaseAdmin();
 
-    let filename = "uploaded_document.pdf";
-    let workspaceId = "10000000-0000-0000-0000-000000000001";
+    let filename = clientFilename || "uploaded_document.pdf";
+    let workspaceId = clientWorkspaceId || "10000000-0000-0000-0000-000000000001";
     let userId = "00000000-0000-0000-0000-000000000001";
     let storagePath: string | null = null;
+    let docType: DocumentType = clientDocType || "material";
 
     // Step 0: Check document metadata if DB is configured
     if (isLiveDb) {
@@ -50,17 +70,19 @@ export async function POST(request: Request) {
         .eq("id", documentId)
         .single();
 
-      if (fetchErr || !doc) {
+      if (doc) {
+        filename = doc.filename || filename;
+        workspaceId = doc.workspace_id || workspaceId;
+        userId = doc.user_id || userId;
+        storagePath = doc.storage_path || storagePath;
+        docType = (doc.doc_type as DocumentType) || docType;
+      } else if (fetchErr && !fileBase64) {
+        // Document not found and no base64 payload provided
         return NextResponse.json(
           { error: `Document '${documentId}' not found in database.` },
           { status: 404 }
         );
       }
-
-      filename = doc.filename;
-      workspaceId = doc.workspace_id;
-      userId = doc.user_id;
-      storagePath = doc.storage_path;
     }
 
     // Verify document/workspace ownership before expensive processing.
@@ -68,7 +90,13 @@ export async function POST(request: Request) {
     if (!auth.ok) {
       return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
-    if (isLiveDb && auth.userId !== userId) {
+
+    if (auth.userId) {
+      userId = auth.userId;
+    }
+
+    const persistToDb = isLiveDb && !auth.isDemo;
+    if (persistToDb && auth.userId !== userId) {
       return NextResponse.json(
         { error: "You do not have access to this document." },
         { status: 403 }
@@ -81,7 +109,7 @@ export async function POST(request: Request) {
       checkpoint: Record<string, any>,
       extra?: Record<string, any>
     ) => {
-      if (isLiveDb) {
+      if (persistToDb) {
         await admin
           .from("documents")
           .update({
@@ -97,10 +125,12 @@ export async function POST(request: Request) {
     // Step 1: Transition -> extracting
     await updateDocumentStatus("extracting", { step: "extracting", startedAt: new Date().toISOString() });
 
-    // Step 2: Fetch PDF buffer
+    // Step 2: Fetch and validate file buffer
     let pdfBuffer: Buffer;
     if (fileBase64) {
-      pdfBuffer = Buffer.from(fileBase64, "base64");
+      // Clean possible data URI scheme prefix (e.g. data:application/pdf;base64,)
+      const cleanBase64 = fileBase64.includes(",") ? fileBase64.split(",")[1] : fileBase64;
+      pdfBuffer = Buffer.from(cleanBase64, "base64");
     } else if (storagePath && isLiveDb) {
       const { data: fileData, error: downloadErr } = await admin.storage
         .from("documents")
@@ -121,8 +151,43 @@ export async function POST(request: Request) {
       );
     }
 
-    // Step 3: Run PDF Text Extraction
-    const parseResult = await parsePdfBuffer(pdfBuffer, { filename });
+    if (pdfBuffer.length > MAX_UPLOAD_BYTES) {
+      return NextResponse.json(
+        { error: "File exceeds maximum allowed size of 50MB." },
+        { status: 413 }
+      );
+    }
+
+    // Step 3: Run Text Extraction (PDF or plain text/Markdown)
+    const lowerFilename = filename.toLowerCase();
+    const isTextFile =
+      lowerFilename.endsWith(".txt") ||
+      lowerFilename.endsWith(".md") ||
+      lowerFilename.endsWith(".markdown");
+
+    let parseResult;
+    if (isTextFile) {
+      const text = pdfBuffer.toString("utf-8");
+      // Split into sections by markdown headings, form feeds, or double line-breaks
+      const sections = text.split(/(?=\n#{1,3}\s)|\f/);
+      const pages = sections
+        .map((s, idx) => ({
+          pageNumber: idx + 1,
+          text: s.trim(),
+          charCount: s.trim().length,
+        }))
+        .filter((p) => p.charCount > 0);
+
+      parseResult = {
+        filename,
+        pageCount: Math.max(1, pages.length),
+        extractedCharCount: text.length,
+        pages: pages.length > 0 ? pages : [{ pageNumber: 1, text: text.trim(), charCount: text.trim().length }],
+        needsOcr: false,
+      };
+    } else {
+      parseResult = await parsePdfBuffer(pdfBuffer, { filename });
+    }
 
     if (parseResult.needsOcr) {
       await updateDocumentStatus(
@@ -152,7 +217,8 @@ export async function POST(request: Request) {
       extractedCharCount: parseResult.extractedCharCount,
     });
 
-    const rawChunks = chunkExtractedPages(parseResult.pages);
+    const allChunks = chunkExtractedPages(parseResult.pages);
+    const rawChunks = maxChunks && maxChunks > 0 ? allChunks.slice(0, maxChunks) : allChunks;
 
     // Step 5: Transition -> embedding
     await updateDocumentStatus("embedding", {
@@ -164,7 +230,29 @@ export async function POST(request: Request) {
     const embeddingResults = await embedBatch(textContents);
 
     // Step 6: Idempotent Database Chunk Upsert
-    if (isLiveDb) {
+    if (persistToDb) {
+      // Ensure document row exists in documents table to satisfy foreign key constraints
+      await admin.from("documents").upsert(
+        {
+          id: documentId,
+          workspace_id: workspaceId,
+          user_id: userId,
+          filename,
+          storage_path: storagePath || `${userId}/${workspaceId}/${documentId}_${filename}`,
+          file_type: isTextFile ? "text/plain" : "application/pdf",
+          declared_size_bytes: pdfBuffer.length,
+          doc_type: docType,
+          status: "embedding",
+          page_count: parseResult.pageCount,
+          extracted_char_count: parseResult.extractedCharCount,
+          chunk_count: rawChunks.length,
+          current_checkpoint: { step: "embedding" },
+          index_version: indexVersion,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "id" }
+      );
+
       // Delete existing chunks for this document and index version to prevent duplicates on retry
       await admin
         .from("document_chunks")
@@ -173,7 +261,12 @@ export async function POST(request: Request) {
         .eq("index_version", indexVersion);
 
       const chunkRowsToInsert = rawChunks.map((chunk, i) => {
-        const emb = embeddingResults[i];
+        const emb = embeddingResults[i] || {
+          embedding: generateDeterministic768dEmbedding(chunk.content),
+          model: EMBEDDING_MODEL_NAME,
+          dimensions: TARGET_EMBEDDING_DIMENSIONS,
+          isMock: true,
+        };
         return {
           id: crypto.randomUUID(),
           document_id: documentId,

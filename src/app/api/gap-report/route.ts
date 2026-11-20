@@ -40,10 +40,12 @@ export async function GET(request: Request) {
     const isLiveDb = isSupabaseAdminConfigured() && !auth.isDemo;
     const admin = getSupabaseAdmin();
 
-    let workspace: any = DEMO_WORKSPACE;
-    let topics: any[] = DEMO_TOPICS;
-    let answers: any[] = DEMO_ANSWERS;
-    let questions: any[] = DEMO_QUIZ_QUESTIONS;
+    let workspace: any = auth.isDemo
+      ? DEMO_WORKSPACE
+      : { id: workspaceId, title: "My Course Workspace", exam_date: null };
+    let topics: any[] = auth.isDemo ? DEMO_TOPICS : [];
+    let answers: any[] = auth.isDemo ? DEMO_ANSWERS : [];
+    let questions: any[] = auth.isDemo ? DEMO_QUIZ_QUESTIONS : [];
 
     if (isLiveDb) {
       const { data: wsData } = await admin

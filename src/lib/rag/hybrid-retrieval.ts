@@ -14,6 +14,7 @@ import JINA_DEMO_EMBEDDINGS from "@/lib/demo/jina-embeddings.json";
 
 export const DEFAULT_RRF_K = 60;
 export const DEFAULT_MATCH_COUNT = 10;
+export const DEMO_WORKSPACE_ID = "10000000-0000-0000-0000-000000000001";
 
 export interface HybridSearchResponse {
   results: HybridSearchResult[];
@@ -80,9 +81,10 @@ export function inMemoryRRFSearch(
   query: HybridSearchQuery,
   options?: InMemorySearchOptions | DocumentChunkRow[]
 ): HybridSearchResult[] {
+  const isDemo = query.workspaceId === DEMO_WORKSPACE_ID;
   const candidateChunks = Array.isArray(options)
     ? options
-    : options?.candidateChunks ?? DEMO_CHUNKS;
+    : options?.candidateChunks ?? (isDemo ? DEMO_CHUNKS : []);
 
   const matchCount = query.matchCount ?? DEFAULT_MATCH_COUNT;
   const rrfK = query.rrfK ?? DEFAULT_RRF_K;
@@ -109,12 +111,8 @@ export function inMemoryRRFSearch(
 
   // Filter chunks by workspace and document type if applicable
   const filteredChunks = candidateChunks.filter((chunk) => {
-    // If specific workspace is passed and matches
     if (query.workspaceId && chunk.workspace_id !== query.workspaceId) {
-      // Allow demo workspace if running against demo data
-      if (chunk.workspace_id !== "10000000-0000-0000-0000-000000000001") {
-        return false;
-      }
+      return false;
     }
     const docMeta = docMap.get(chunk.document_id);
     const chunkDocType: DocumentType =
@@ -215,7 +213,9 @@ export async function hybridSearch(
   const allowedDocTypes = query.allowedDocTypes ?? ["syllabus", "material"];
   const rrfK = query.rrfK ?? DEFAULT_RRF_K;
 
-  if (isSupabaseAdminConfigured()) {
+  const isDemoWorkspace = query.workspaceId === DEMO_WORKSPACE_ID;
+
+  if (isSupabaseAdminConfigured() && !isDemoWorkspace) {
     try {
       const supabase = getSupabaseAdmin();
       const { data, error } = await supabase.rpc("match_documents_hybrid", {
@@ -227,23 +227,48 @@ export async function hybridSearch(
         p_rrf_k: rrfK,
       });
 
-      if (!error && Array.isArray(data) && data.length > 0) {
+      if (error) {
+        console.error("[Hybrid Retrieval] Supabase RPC failed:", error.message);
         return {
-          results: data as HybridSearchResult[],
+          results: [],
           executionMode: "supabase_rpc",
           isMock: false,
-          totalFound: data.length,
+          totalFound: 0,
         };
       }
+
+      const results = Array.isArray(data) ? (data as HybridSearchResult[]) : [];
+      return {
+        results,
+        executionMode: "supabase_rpc",
+        isMock: false,
+        totalFound: results.length,
+      };
     } catch (rpcErr) {
-      console.warn(
-        `[Hybrid Retrieval] Supabase RPC failed, using in-memory RRF fallback:`,
+      console.error(
+        "[Hybrid Retrieval] Supabase RPC failed:",
         rpcErr instanceof Error ? rpcErr.message : rpcErr
       );
+      return {
+        results: [],
+        executionMode: "supabase_rpc",
+        isMock: false,
+        totalFound: 0,
+      };
     }
   }
 
-  // In-memory RRF fallback
+  // In-memory RRF is only valid for the demo workspace or explicitly supplied chunks.
+  const hasExplicitChunks = options && (Array.isArray(options) ? options.length > 0 : (options.candidateChunks && options.candidateChunks.length > 0));
+  if (!isDemoWorkspace && !hasExplicitChunks) {
+    return {
+      results: [],
+      executionMode: "in_memory_fallback",
+      isMock: true,
+      totalFound: 0,
+    };
+  }
+
   const fallbackResults = inMemoryRRFSearch(query, options);
   return {
     results: fallbackResults,

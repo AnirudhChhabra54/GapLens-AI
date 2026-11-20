@@ -4,9 +4,10 @@
 // GapLens AI — Grounded Study Copilot Drawer / Split Panel
 // Source-locked conversational assistant. Answers strictly from retrieved course chunks.
 // Rejects out-of-scope inquiries and attaches verified textbook citations.
+// Redesigned: Editorial light styling with warm surface, slate-blue accents, and charcoal typography.
 // ==============================================================================
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   Sparkles,
   Send,
@@ -14,11 +15,8 @@ import {
   BookOpen,
   ShieldCheck,
   AlertCircle,
-  HelpCircle,
   Bot,
   User,
-  ChevronRight,
-  ShieldAlert,
 } from "lucide-react";
 import { CitationBadge } from "@/components/citation-badge";
 import { useWorkspace } from "@/components/workspace-context";
@@ -26,6 +24,7 @@ import { DEMO_CHUNKS } from "@/lib/demo/os-cs301-fixture";
 import { processCopilotChat } from "@/lib/algorithms/copilot";
 import type { CopilotChatResponse } from "@/types/planner";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/design-system";
 
 interface Message {
   id: string;
@@ -44,10 +43,9 @@ interface Message {
 }
 
 const DEFAULT_SUGGESTIONS = [
-  "Explain TLB miss handling in Virtual Memory",
+  "Explain TLB miss handling in virtual memory",
   "How does Banker's Algorithm guarantee safety?",
   "Difference between Counting Semaphore and Mutex",
-  "Write me a Python game script (Test Out-of-Scope Defense)",
 ];
 
 interface CopilotDrawerProps {
@@ -63,19 +61,33 @@ export function CopilotDrawer({
   activeTopicTitle,
   className,
 }: CopilotDrawerProps) {
-  const { workspace, isDemo } = useWorkspace();
+  const { workspace, topics, isDemo } = useWorkspace();
+  const courseTitle = workspace?.title || (isDemo ? "Operating Systems" : "your course");
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "initial-msg",
       role: "assistant",
-      content:
-        "Hello! I am your GapLens Study Copilot, grounded strictly in your Operating Systems (CS-301) syllabus and Silberschatz OS Concepts notes. Ask me any conceptual question or ask for clarification on your diagnosed blind spots.",
+      content: `Hello! I am your Study Copilot, grounded in your ${courseTitle} syllabus and verified course notes. Ask me any conceptual question or ask for clarification on your diagnosed blind spots.`,
       isGrounded: true,
     },
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const suggestions = useMemo(() => {
+    if (topics && topics.length > 0) {
+      return topics.slice(0, 3).map((t) => `Explain key concepts in ${t.title}`);
+    }
+    if (isDemo) {
+      return DEFAULT_SUGGESTIONS;
+    }
+    return [
+      "What are the core foundational topics in this course?",
+      "How should I prioritize my study revision?",
+      "Summarize the key objectives of this syllabus",
+    ];
+  }, [topics, isDemo]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -184,32 +196,33 @@ export function CopilotDrawer({
   return (
     <div
       className={cn(
-        "flex flex-col h-full rounded-2xl border border-[rgba(183,255,232,0.12)] bg-[#080D0C]/98 backdrop-blur-2xl shadow-2xl overflow-hidden",
+        "flex flex-col h-full rounded-panel border border-brandBorder bg-surface shadow-2xl overflow-hidden",
         className
       )}
     >
       {/* Drawer Header */}
-      <div className="flex items-center justify-between border-b border-[rgba(183,255,232,0.08)] px-5 py-4 bg-[#0D1512]">
+      <div className="flex items-center justify-between border-b border-brandBorder px-5 py-4 bg-surface">
         <div className="flex items-center gap-3">
-          <div className="h-8 w-8 rounded-xl bg-[#121D18] border border-[rgba(0,214,160,0.3)] flex items-center justify-center text-[#00D6A0]">
+          <div className="h-8 w-8 rounded-control bg-accent-soft text-accent flex items-center justify-center">
             <Sparkles className="h-4 w-4" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold text-[#F1F7F4] tracking-tight">Study Copilot</h3>
-              <span className="rounded-full bg-[#121D18] border border-[rgba(0,214,160,0.3)] px-2 py-0.5 text-[10px] font-mono text-[#00D6A0]">
-                Source-Locked
+              <h3 className="text-sm font-semibold text-brandText-primary">Study Copilot</h3>
+              <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-mono text-accent">
+                Source-locked
               </span>
             </div>
-            <p className="text-[11px] text-[#A0ADA6]">
-              Grounded strictly in Silberschatz OS Concepts
+            <p className="text-[11px] text-brandText-muted">
+              Grounded in verified course notes and syllabus
             </p>
           </div>
         </div>
 
         <button
           onClick={onClose}
-          className="p-1.5 rounded-lg text-[#6D7C74] hover:text-[#F1F7F4] hover:bg-[#121D18] transition"
+          className="p-1.5 rounded-control text-brandText-muted hover:text-brandText-primary hover:bg-surface-subtle transition"
+          aria-label="Close study copilot"
         >
           <X className="h-4 w-4" />
         </button>
@@ -221,34 +234,34 @@ export function CopilotDrawer({
           <div
             key={m.id}
             className={cn(
-              "flex gap-3 max-w-[92%]",
+              "flex gap-3 max-w-[90%]",
               m.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto"
             )}
           >
             <div
               className={cn(
-                "h-7 w-7 rounded-full flex items-center justify-center shrink-0 text-[11px] font-mono",
+                "h-6 w-6 rounded-full flex items-center justify-center shrink-0 text-[10px] font-mono",
                 m.role === "user"
-                  ? "bg-[#00D6A0] text-[#080D0C] font-bold"
-                  : "bg-[#121D18] text-[#00D6A0] border border-[rgba(183,255,232,0.12)]"
+                  ? "bg-accent text-white font-medium"
+                  : "bg-surface-subtle text-accent border border-brandBorder"
               )}
             >
-              {m.role === "user" ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+              {m.role === "user" ? <User className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
             </div>
 
             <div className="space-y-2">
               <div
                 className={cn(
-                  "p-3.5 rounded-2xl leading-relaxed text-xs",
+                  "p-3.5 rounded-control leading-relaxed text-xs",
                   m.role === "user"
-                    ? "bg-[#17231D] border border-[rgba(183,255,232,0.14)] text-[#F1F7F4] rounded-tr-none"
+                    ? "bg-accent text-white rounded-tr-none shadow-xs"
                     : m.outOfScope
-                    ? "bg-[#121D18] border border-[rgba(251,191,36,0.25)] text-[#FBBF24] rounded-tl-none"
-                    : "bg-[#0D1512] border border-[rgba(183,255,232,0.08)] text-[#F1F7F4] rounded-tl-none"
+                    ? "bg-[#FAF2EE] border border-[#E8CFC4] text-[#85553F] rounded-tl-none"
+                    : "bg-surface-subtle border border-brandBorder text-brandText-primary rounded-tl-none"
                 )}
               >
                 {m.outOfScope && (
-                  <div className="flex items-center gap-1.5 text-[#FBBF24] font-semibold mb-1 text-[11px] font-mono">
+                  <div className="flex items-center gap-1.5 text-[#85553F] font-semibold mb-1 text-[11px] font-mono">
                     <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                     <span>Out-of-Scope Query Refusal</span>
                   </div>
@@ -275,8 +288,8 @@ export function CopilotDrawer({
         ))}
 
         {loading && (
-          <div className="flex items-center gap-2 text-[#A0ADA6] text-xs font-mono italic">
-            <Bot className="h-4 w-4 animate-spin text-[#00D6A0]" />
+          <div className="flex items-center gap-2 text-brandText-muted text-xs font-mono italic">
+            <Bot className="h-4 w-4 animate-spin text-accent" />
             <span>Retrieving syllabus chunks and formulating grounded answer...</span>
           </div>
         )}
@@ -285,16 +298,16 @@ export function CopilotDrawer({
       </div>
 
       {/* Suggested Quick Chips */}
-      <div className="px-4 py-2.5 bg-[#0D1512] border-t border-[rgba(183,255,232,0.08)]">
-        <p className="text-[10px] font-mono uppercase tracking-wider text-[#6D7C74] mb-1.5">
-          Suggested Inquiries:
+      <div className="px-4 py-2.5 bg-surface-subtle border-t border-brandBorder">
+        <p className="text-[10px] font-mono uppercase tracking-wider text-brandText-muted mb-1.5">
+          Suggested questions:
         </p>
         <div className="flex flex-wrap gap-1.5">
-          {DEFAULT_SUGGESTIONS.map((chip, idx) => (
+          {suggestions.map((chip, idx) => (
             <button
               key={idx}
               onClick={() => handleSend(chip)}
-              className="rounded-full bg-[#121D18] hover:bg-[#17231D] border border-[rgba(183,255,232,0.08)] hover:border-[#00D6A0]/40 text-[#A0ADA6] hover:text-[#F1F7F4] px-2.5 py-1 text-[11px] transition text-left"
+              className="rounded-full bg-surface hover:bg-surface-muted border border-brandBorder text-brandText-secondary hover:text-brandText-primary px-2.5 py-1 text-[11px] transition text-left"
             >
               {chip}
             </button>
@@ -302,8 +315,8 @@ export function CopilotDrawer({
         </div>
       </div>
 
-      {/* Input bar */}
-      <div className="p-3 bg-[#0D1512] border-t border-[rgba(183,255,232,0.08)]">
+      {/* Input composer */}
+      <div className="p-3 bg-surface border-t border-brandBorder">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -315,19 +328,20 @@ export function CopilotDrawer({
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask Copilot about any OS topic..."
-            className="flex-1 rounded-xl border border-[rgba(183,255,232,0.10)] bg-[#080D0C] px-3.5 py-2.5 text-xs text-[#F1F7F4] placeholder-[#6D7C74] focus:outline-none focus:border-[#00D6A0] focus:ring-1 focus:ring-[#00D6A0]"
+            placeholder="Ask Copilot about any course topic..."
+            className="flex-1 rounded-control border border-brandBorder bg-surface px-3 py-2 text-xs text-brandText-primary placeholder-brandText-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent"
           />
-          <button
+          <Button
             type="submit"
+            variant="primary"
+            size="sm"
             disabled={!input.trim() || loading}
-            className="rounded-xl bg-gradient-to-r from-[#00D6A0] to-[#00B887] p-2.5 text-[#080D0C] font-semibold hover:shadow-[0_0_15px_rgba(0,214,160,0.3)] disabled:opacity-30 transition shrink-0"
           >
-            <Send className="h-4 w-4" />
-          </button>
+            <Send className="h-3.5 w-3.5" />
+          </Button>
         </form>
-        <p className="text-[10px] font-mono text-[#6D7C74] text-center mt-1.5">
-          Protected by strict prompt-injection defense & deterministic citation grounding.
+        <p className="text-[10px] font-mono text-brandText-muted text-center mt-1.5">
+          Source-locked: strictly grounded in verified syllabus chunks.
         </p>
       </div>
     </div>
