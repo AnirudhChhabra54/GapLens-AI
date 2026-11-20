@@ -8,7 +8,7 @@
 [![Groq](https://img.shields.io/badge/LLM-Groq%20(openai%2Fgpt--oss--120b)-f55036)](https://groq.com/)
 [![Jina AI](https://img.shields.io/badge/Embeddings-Jina%20v5--text--nano%20(768d)-11998e)](https://jina.ai/)
 [![Supabase](https://img.shields.io/badge/Supabase-Auth%20%26%20PostgreSQL-3ecf8e?logo=supabase)](https://supabase.com/)
-[![Vitest](https://img.shields.io/badge/Vitest-472%20passed-6e9f18?logo=vitest)](https://vitest.dev/)
+[![Vitest](https://img.shields.io/badge/Vitest-483%20passed-6e9f18?logo=vitest)](https://vitest.dev/)
 
 GapLens AI is an evidence-grounded study diagnostic platform that identifies what students actually know versus what they only think they know. By ingesting course materials, generating citation-backed diagnostic assessments, and detecting high-confidence blind spots, GapLens builds personalized daily revision plans constrained by the student's real study time.
 
@@ -68,7 +68,7 @@ flowchart TD
 | **Course Materials** (`/materials`) | Lists uploaded documents, ingestion status steppers, syllabus units, and the interactive prerequisite knowledge graph. |
 | **Diagnostic Lab** (`/diagnostic`) | Runs assessment challenges with decoupled confidence selectors, immediate citation feedback, and question generator preview. |
 | **Hero Gap Report** (`/gap-report`) | The diagnostic centerpiece: displays the Mastery Matrix, Metacognitive Calibration Matrix, and expandable Evidence Ledger with source quotes. |
-| **Revision Planner** (`/planner`) | Provides daily time-budget sliders (15–180 min), task completion checkboxes, and the source-locked Study Copilot drawer. |
+| **Revision Planner** (`/planner`) | Provides daily time-budget sliders (15m–24h / 1440 min), custom minute input, task completion checkboxes, and the source-locked Study Copilot drawer. |
 
 > *UI Note:* Genuine UI screenshots will be added here following production release. You can explore all five interactive screens immediately using the local 1-Click Judge Demo.
 
@@ -114,13 +114,14 @@ You can run the entire platform locally without external API keys:
 |---|---|---|
 | **Framework** | Next.js 14 (App Router) | Full-stack architecture hosting React frontend screens and serverless API route handlers |
 | **Language** | TypeScript 5.6 | Strict end-to-end type safety across schemas, algorithms, and UI components |
-| **Styling** | Tailwind CSS & Radix UI | Midnight navy dark theme, accessible modal drawers, progress gauges, and form controls |
+| **Styling** | Tailwind CSS & Radix UI | Editorial light-first palette (warm ivory `#F7F5F0`, warm surface `#FFFEFC`, slate-blue `#4C6477`, warm clay `#85553F`), accessible modal drawers, progress gauges, and form controls |
 | **Database** | Supabase & PostgreSQL 15 | 13 relational tables, Row-Level Security policies, and in-database retrieval functions |
 | **Vector Search** | pgvector | 768-dimensional vector storage with HNSW indexing for dense semantic similarity |
-| **AI Integration** | Google Gemini API | Powers text embeddings, grounded question synthesis, and rubric-based short answer evaluation |
+| **LLM Inference** | Groq Cloud (`openai/gpt-oss-120b`) | Ultra-fast LPU inference for structured syllabus extraction, diagnostic questions, rubric scoring, and grounded Study Copilot answers |
+| **Embeddings** | Jina AI (`v5-text-nano` 768d) | High-precision 768-dimensional dense vector embeddings for course passages and past-paper question mapping |
 | **PDF Extraction** | `unpdf` | Server-side text extraction preserving 1-based page coordinates and section headers |
 | **Graph UI** | `@xyflow/react` | Interactive node-edge visualization of topic prerequisite dependencies |
-| **Testing** | Vitest & React Testing Library | Fast unit, integration, and scenario-based regression testing |
+| **Testing** | Vitest & React Testing Library | Fast unit, integration, and scenario-based regression testing (483 tests) |
 
 ---
 
@@ -150,7 +151,8 @@ flowchart LR
 
     subgraph Storage["Data & Model Providers"]
         SUPA[("Supabase PostgreSQL 15\n13 tables + pgvector + RLS")]
-        GEMINI["Google Gemini API\n(Flash 1.5 + Embeddings)"]
+        GROQ["Groq Cloud LLM\n(openai/gpt-oss-120b / fast inference)"]
+        JINA["Jina AI Embeddings\n(v5-text-nano 768d dense vectors)"]
     end
 
     UI --> API
@@ -159,9 +161,10 @@ flowchart LR
     R_GAP --> ENG_CAL
     R_PLN --> ENG_SCHED
     ENG_RAG --> SUPA
-    ENG_RAG --> GEMINI
+    ENG_RAG --> JINA
+    ENG_RAG --> GROQ
     ENG_EVAL --> SUPA
-    ENG_EVAL --> GEMINI
+    ENG_EVAL --> GROQ
     ENG_SCHED --> SUPA
 ```
 
@@ -188,7 +191,7 @@ GapLens-AI/
 │   │   └── api/                # 10 serverless endpoints (documents, quiz, copilot, etc.)
 │   ├── components/             # Reusable UI components (prerequisite graph, drawers, cards)
 │   ├── lib/
-│   │   ├── ai/                 # Gemini API integration and structured schemas
+│   │   ├── ai/                 # Groq & Jina AI integrations, fallback adapters, and schemas
 │   │   ├── algorithms/         # Pure algorithmic engines (mastery, scheduler, evaluator)
 │   │   ├── demo/               # Synthetic OS CS-301 fixtures and client state fallbacks
 │   │   ├── rag/                # PDF parser, chunker, hybrid search, citation verifier
@@ -272,7 +275,7 @@ NEXT_PUBLIC_APP_URL="https://gap-lens-ai-rho.vercel.app"
 The test suite validates algorithms, API route handlers, component rendering, and end-to-end user journeys using Vitest.
 
 ```bash
-# Run all unit, integration, and scenario tests (472 tests)
+# Run all unit, integration, and scenario tests (483 tests)
 pnpm test
 
 # Run structural E2E scenario suites only (296 tests)
@@ -298,7 +301,7 @@ pnpm build
 - **Pre-Seeded Operating Systems Curriculum:** Bundled with a full undergraduate Operating Systems (CS-301) curriculum covering Concurrency, Virtual Memory, Scheduling, and Storage, complete with textbook citations, verified verbatim quotations, and prerequisite maps.
 - **Real Cloud Authentication & Demo Access:** Supports both live Supabase GoTrue authentication (with interviewer/judge accounts) and instant 1-Click Judge Demo access without credential friction.
 - **Scanned Document OCR:** PDFs containing only scanned bitmap images without embedded text layers trigger an honest `needs_ocr` alert rather than attempting low-accuracy character extraction.
-- **Test Suite Coverage:** 472 unit, integration, and scenario tests passing in Vitest with 100% route and algorithmic verification.
+- **Test Suite Coverage:** 483 unit, integration, and scenario tests passing in Vitest with 100% route and algorithmic verification.
 
 ---
 
