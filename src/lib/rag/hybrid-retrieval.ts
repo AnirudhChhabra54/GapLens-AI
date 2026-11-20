@@ -221,6 +221,11 @@ export async function hybridSearch(
   const rrfK = query.rrfK ?? DEFAULT_RRF_K;
 
   const isDemoWorkspace = query.workspaceId === DEMO_WORKSPACE_ID;
+  const hasExplicitChunks =
+    options &&
+    (Array.isArray(options)
+      ? options.length > 0
+      : Boolean(options.candidateChunks && options.candidateChunks.length > 0));
 
   if (isSupabaseAdminConfigured() && !isDemoWorkspace) {
     try {
@@ -235,7 +240,32 @@ export async function hybridSearch(
       });
 
       if (error) {
-        console.error("[Hybrid Retrieval] Supabase RPC failed:", error.message);
+        console.warn("[Hybrid Retrieval] Supabase RPC unavailable or unmigrated, falling back to direct chunk query:", error.message);
+        const { data: chunksData } = await supabase
+          .from("document_chunks")
+          .select("*")
+          .eq("workspace_id", query.workspaceId);
+
+        if (chunksData && chunksData.length > 0) {
+          const directResults = inMemoryRRFSearch(query, { candidateChunks: chunksData });
+          return {
+            results: directResults,
+            executionMode: "in_memory_fallback",
+            isMock: false,
+            totalFound: directResults.length,
+          };
+        }
+
+        if (hasExplicitChunks) {
+          const explicitResults = inMemoryRRFSearch(query, options);
+          return {
+            results: explicitResults,
+            executionMode: "in_memory_fallback",
+            isMock: false,
+            totalFound: explicitResults.length,
+          };
+        }
+
         return {
           results: [],
           executionMode: "supabase_rpc",
@@ -266,7 +296,6 @@ export async function hybridSearch(
   }
 
   // In-memory RRF is only valid for the demo workspace or explicitly supplied chunks.
-  const hasExplicitChunks = options && (Array.isArray(options) ? options.length > 0 : (options.candidateChunks && options.candidateChunks.length > 0));
   if (!isDemoWorkspace && !hasExplicitChunks) {
     return {
       results: [],

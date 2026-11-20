@@ -106,6 +106,10 @@ export async function POST(request: Request) {
     const titleToId = new Map<string, string>();
     const topicKey = (title: string, unitModule: string | null) =>
       `${(unitModule || "").trim().toLowerCase()}::${title.trim().toLowerCase()}`;
+    const baselineWeight =
+      extraction.topics.length > 0
+        ? Number((1 / extraction.topics.length).toFixed(3))
+        : 0.05;
 
     if (isLiveDb && !isSchemaMissing) {
       const { data: existingTopics, error: existingTopicsError } = await admin
@@ -153,7 +157,7 @@ export async function POST(request: Request) {
                 extraction_confidence: 0.95,
                 exam_frequency: 0,
                 exam_total_marks: 0,
-                exam_weight: 0,
+                exam_weight: baselineWeight,
                 current_mastery: 45.0,
                 classification: "unassessed",
                 evidence_level: "early_signal",
@@ -186,7 +190,7 @@ export async function POST(request: Request) {
             extraction_confidence: t.extractionConfidence,
             exam_frequency: 0,
             exam_total_marks: 0,
-            exam_weight: 0,
+            exam_weight: baselineWeight,
             current_mastery: 45.0,
             classification: "unassessed",
             evidence_level: "early_signal",
@@ -272,7 +276,7 @@ export async function POST(request: Request) {
               current_mastery: 45.0,
               classification: "unassessed",
               evidence_level: "early_signal",
-              exam_weight: 0,
+              exam_weight: baselineWeight,
             });
           }
         }
@@ -292,7 +296,7 @@ export async function POST(request: Request) {
           current_mastery: 45.0,
           classification: "unassessed",
           evidence_level: "early_signal",
-          exam_weight: 0,
+          exam_weight: baselineWeight,
         });
       });
 

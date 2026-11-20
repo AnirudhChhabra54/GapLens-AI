@@ -63,7 +63,7 @@ export function CopilotDrawer({
   activeTopicTitle,
   className,
 }: CopilotDrawerProps) {
-  const { workspace, topics, isDemo } = useWorkspace();
+  const { workspace, topics, documents, isDemo } = useWorkspace();
   const courseTitle = workspace?.title || (isDemo ? "Operating Systems" : "your course");
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -123,6 +123,18 @@ export function CopilotDrawer({
           message: messageText,
           topicId: activeTopicId || undefined,
           history: messages.map((m) => ({ role: m.role, content: m.content })),
+          topics: (topics || []).map((t) => ({
+            id: t.id,
+            title: t.title,
+            unitModule: t.unit_module,
+            learningObjectives: t.learning_objectives,
+          })),
+          documents: (documents || []).map((d) => ({
+            id: d.id,
+            filename: d.filename,
+            storagePath: d.storage_path,
+            extractedText: (d as any).extracted_text,
+          })),
         }),
       });
 

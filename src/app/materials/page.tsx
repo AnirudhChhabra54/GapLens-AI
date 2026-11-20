@@ -348,6 +348,24 @@ export default function MaterialsPage() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || "Failed to map past-paper questions.");
       }
+      if (data.examWeights && Array.isArray(data.examWeights)) {
+        const weightMap = new Map<string, { examFrequency: number; examTotalMarks: number; examWeight: number }>(
+          data.examWeights.map((w: any) => [w.topicId, w])
+        );
+        const updatedTopics = topics.map((t) => {
+          const w = weightMap.get(t.id);
+          if (w) {
+            return {
+              ...t,
+              exam_frequency: w.examFrequency,
+              exam_total_marks: w.examTotalMarks,
+              exam_weight: w.examWeight,
+            };
+          }
+          return t;
+        });
+        setWorkspaceTopics(updatedTopics);
+      }
       setActionSuccess(
         `Mapped ${data.mappedCount} past-paper questions to syllabus topics and updated exam weights!`
       );
@@ -562,7 +580,7 @@ export default function MaterialsPage() {
   // Group topics by Unit for Outline View
   const unitsMap = new Map<string, typeof topics>();
   for (const t of topics) {
-    const unit = t.unit_module || "Core Operating Systems";
+    const unit = t.unit_module || workspace?.title || "Core Curriculum";
     if (!unitsMap.has(unit)) unitsMap.set(unit, []);
     unitsMap.get(unit)!.push(t);
   }
@@ -997,6 +1015,19 @@ export default function MaterialsPage() {
               </p>
             </div>
 
+            <div className="p-3.5 rounded-control bg-accent-soft/30 border border-accent/20 flex flex-col sm:flex-row sm:items-start justify-between gap-2.5 text-xs">
+              <div className="space-y-1">
+                <span className="font-semibold text-brandText-primary block">
+                  Curriculum Weights & Bayesian Mastery Priors
+                </span>
+                <p className="text-brandText-secondary text-[11px] leading-relaxed">
+                  • <strong>Curriculum Baseline Weight:</strong> Topics receive an initial balanced baseline weight across all extracted topics. Upload past exam papers and click &quot;Analyze weights&quot; to calculate empirical weights from actual historical exam questions and marks.
+                  <br />
+                  • <strong>Mastery Prior (45%):</strong> Newly extracted topics begin with a 45% Bayesian Knowledge Tracing prior until calibrated in the Diagnostic Lab.
+                </p>
+              </div>
+            </div>
+
             <div className="space-y-4">
               {loadingTree ? (
                 <div className="py-10 text-center text-xs text-brandText-muted font-mono">
@@ -1016,6 +1047,7 @@ export default function MaterialsPage() {
                 topicTree.map((rootNode: any, rIdx: number) => {
                   const hasChildren = rootNode.children && rootNode.children.length > 0;
                   const childNodes = hasChildren ? rootNode.children : [rootNode];
+                  const totalTreeWeight = childNodes.reduce((sum: number, t: any) => sum + (t.exam_weight || 0), 0);
                   return (
                     <div
                       key={rootNode.id || rIdx}
@@ -1032,9 +1064,17 @@ export default function MaterialsPage() {
                             </p>
                           )}
                         </div>
-                        <span className="text-xs text-brandText-muted font-mono">
-                          {childNodes.length} {childNodes.length === 1 ? "topic" : "topics"}
-                        </span>
+                        <div className="flex items-center gap-2 text-xs text-brandText-muted font-mono">
+                          <span>
+                            {childNodes.length} {childNodes.length === 1 ? "topic" : "topics"}
+                          </span>
+                          {totalTreeWeight > 0 && (
+                            <>
+                              <span>•</span>
+                              <span className="text-accent font-medium">{Math.round(totalTreeWeight * 100)}% weight</span>
+                            </>
+                          )}
+                        </div>
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
@@ -1049,7 +1089,12 @@ export default function MaterialsPage() {
                               </span>
                               <div className="flex items-center gap-2 mt-0.5 text-[11px] text-brandText-muted font-mono">
                                 <span>
-                                  Exam weight: {topic.exam_weight ? `${Math.round(topic.exam_weight * 100)}%` : "N/A"}
+                                  Exam weight:{" "}
+                                  {topic.exam_frequency && topic.exam_frequency > 0
+                                    ? `${Math.round((topic.exam_weight || 0) * 100)}% (${topic.exam_frequency} Qs${topic.exam_total_marks ? `, ${topic.exam_total_marks} marks` : ""})`
+                                    : topic.exam_weight && topic.exam_weight > 0
+                                    ? `${Math.round(topic.exam_weight * 100)}% (Baseline)`
+                                    : "Unweighted"}
                                 </span>
                                 <span>•</span>
                                 <span>{topic.total_attempts || 0} attempts</span>
@@ -1070,14 +1115,21 @@ export default function MaterialsPage() {
 
                             <span
                               className={`rounded px-2 py-0.5 text-[10px] font-mono font-medium shrink-0 ${
-                                topic.classification === "strong"
+                                (topic.total_attempts || 0) === 0
+                                  ? "bg-surface-subtle text-brandText-secondary border border-brandBorder"
+                                  : topic.classification === "strong"
                                   ? "bg-accent-soft text-accent"
                                   : topic.classification === "medium"
                                   ? "bg-[#FEF5E7] text-[#C27803]"
                                   : "bg-[#FDF0EE] text-[#B84A39]"
                               }`}
+                              title={
+                                (topic.total_attempts || 0) === 0
+                                  ? "Untested initial 45% Bayesian prior"
+                                  : `Mastery calibrated across ${topic.total_attempts} attempts`
+                              }
                             >
-                              {Math.round(topic.current_mastery ?? 45)}%
+                              {(topic.total_attempts || 0) === 0 ? "45% (Prior)" : `${Math.round(topic.current_mastery ?? 45)}%`}
                             </span>
                           </div>
                         ))}
@@ -1086,51 +1138,77 @@ export default function MaterialsPage() {
                   );
                 })
               ) : (
-                Array.from(unitsMap.entries()).map(([unitName, unitTopics], uIdx) => (
-                <div
-                  key={unitName}
-                  className="rounded-card border border-brandBorder bg-surface-subtle p-4 space-y-3"
-                >
-                  <div className="flex items-center justify-between pb-2 border-b border-brandBorder">
-                    <span className="text-xs font-semibold text-brandText-primary">
-                      Unit {uIdx + 1}: {unitName}
-                    </span>
-                    <span className="text-xs text-brandText-muted font-mono">
-                      {unitTopics.length} core topics
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                    {unitTopics.map((topic) => (
-                      <div
-                        key={topic.id}
-                        className="rounded-control border border-brandBorder bg-surface p-3 flex items-center justify-between text-xs"
-                      >
-                        <div>
-                          <span className="font-medium text-brandText-primary block">{topic.title}</span>
-                          <span className="text-[11px] text-brandText-muted font-mono">
-                            Exam weight: {topic.exam_weight ? `${Math.round(topic.exam_weight * 100)}%` : "N/A"} •{" "}
-                            {topic.total_attempts || 0} attempts
-                          </span>
-                        </div>
-
-                        <span
-                          className={`rounded px-2 py-0.5 text-[10px] font-mono font-medium ${
-                            topic.classification === "strong"
-                              ? "bg-accent-soft text-accent"
-                              : topic.classification === "medium"
-                              ? "bg-[#FEF5E7] text-[#C27803]"
-                              : "bg-[#FDF0EE] text-[#B84A39]"
-                          }`}
-                        >
-                          {Math.round(topic.current_mastery ?? 45)}%
+                Array.from(unitsMap.entries()).map(([unitName, unitTopics], uIdx) => {
+                  const totalUnitWeight = unitTopics.reduce((sum, t) => sum + (t.exam_weight || 0), 0);
+                  return (
+                    <div
+                      key={unitName}
+                      className="rounded-card border border-brandBorder bg-surface-subtle p-4 space-y-3"
+                    >
+                      <div className="flex items-center justify-between pb-2 border-b border-brandBorder">
+                        <span className="text-xs font-semibold text-brandText-primary">
+                          Unit {uIdx + 1}: {unitName}
                         </span>
+                        <div className="flex items-center gap-2 text-xs text-brandText-muted font-mono">
+                          <span>
+                            {unitTopics.length} {unitTopics.length === 1 ? "topic" : "topics"}
+                          </span>
+                          {totalUnitWeight > 0 && (
+                            <>
+                              <span>•</span>
+                              <span className="text-accent font-medium">{Math.round(totalUnitWeight * 100)}% weight</span>
+                            </>
+                          )}
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              ))
-            )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                        {unitTopics.map((topic) => (
+                          <div
+                            key={topic.id}
+                            className="rounded-control border border-brandBorder bg-surface p-3 flex items-center justify-between text-xs"
+                          >
+                            <div className="min-w-0 flex-1 pr-3">
+                              <span className="font-medium text-brandText-primary block truncate">{topic.title}</span>
+                              <div className="flex items-center gap-2 mt-0.5 text-[11px] text-brandText-muted font-mono">
+                                <span>
+                                  Exam weight:{" "}
+                                  {topic.exam_frequency && topic.exam_frequency > 0
+                                    ? `${Math.round((topic.exam_weight || 0) * 100)}% (${topic.exam_frequency} Qs${topic.exam_total_marks ? `, ${topic.exam_total_marks} marks` : ""})`
+                                    : topic.exam_weight && topic.exam_weight > 0
+                                    ? `${Math.round(topic.exam_weight * 100)}% (Baseline)`
+                                    : "Unweighted"}
+                                </span>
+                                <span>•</span>
+                                <span>{topic.total_attempts || 0} attempts</span>
+                              </div>
+                            </div>
+
+                            <span
+                              className={`rounded px-2 py-0.5 text-[10px] font-mono font-medium shrink-0 ${
+                                (topic.total_attempts || 0) === 0
+                                  ? "bg-surface-subtle text-brandText-secondary border border-brandBorder"
+                                  : topic.classification === "strong"
+                                  ? "bg-accent-soft text-accent"
+                                  : topic.classification === "medium"
+                                  ? "bg-[#FEF5E7] text-[#C27803]"
+                                  : "bg-[#FDF0EE] text-[#B84A39]"
+                              }`}
+                              title={
+                                (topic.total_attempts || 0) === 0
+                                  ? "Untested initial 45% Bayesian prior"
+                                  : `Mastery calibrated across ${topic.total_attempts} attempts`
+                              }
+                            >
+                              {(topic.total_attempts || 0) === 0 ? "45% (Prior)" : `${Math.round(topic.current_mastery ?? 45)}%`}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </Card>
         )}
