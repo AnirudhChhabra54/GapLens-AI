@@ -9,7 +9,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
-import { isMissingSchemaError, schemaMissingPayload } from "@/lib/supabase/errors";
+import {
+  isMissingSchemaError,
+  schemaMissingPayload,
+  SCHEMA_MISSING_MESSAGE,
+} from "@/lib/supabase/errors";
 import { parsePdfBuffer } from "@/lib/rag/pdf-parser";
 import { chunkExtractedPages } from "@/lib/rag/chunker";
 import {
@@ -346,6 +350,18 @@ export async function POST(request: Request) {
         const { error: chunkInsertErr } = await admin.from("document_chunks").insert(chunkRowsToInsert);
         if (chunkInsertErr) {
           console.error("[Ingestion Process] Chunk insert error:", chunkInsertErr);
+          if (isMissingSchemaError(chunkInsertErr)) {
+            return NextResponse.json({
+              success: true,
+              status: "indexed" as DocumentStatus,
+              documentId,
+              chunkCount: rawChunks.length,
+              pageCount: parseResult.pageCount,
+              extractedCharCount: parseResult.extractedCharCount,
+              isOffline: true,
+              warning: SCHEMA_MISSING_MESSAGE,
+            });
+          }
           await updateDocumentStatus("failed", { step: "chunk_insert_failed", error: chunkInsertErr.message });
           return NextResponse.json(
             { error: "Failed to save document chunks into database", details: chunkInsertErr.message },

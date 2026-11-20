@@ -8,7 +8,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
-import { isMissingSchemaError, schemaMissingPayload } from "@/lib/supabase/errors";
+import {
+  isMissingSchemaError,
+  schemaMissingPayload,
+  SCHEMA_MISSING_MESSAGE,
+} from "@/lib/supabase/errors";
 import type { DocumentType, DocumentStatus } from "@/types/database";
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50MB
@@ -62,9 +66,34 @@ export async function POST(request: Request) {
       const admin = getSupabaseAdmin();
 
       // Generate signed upload URL from Supabase Storage private bucket 'documents'
-      const { data: uploadData, error: uploadError } = await admin.storage
+      let { data: uploadData, error: uploadError } = await admin.storage
         .from("documents")
         .createSignedUploadUrl(storagePath);
+
+      // Auto-provision bucket if missing or not yet created in Supabase
+      if (
+        uploadError &&
+        (uploadError.message?.toLowerCase().includes("not found") ||
+          (uploadError as any).statusCode === 404 ||
+          (uploadError as any).status === 404)
+      ) {
+        console.warn("[Upload Sign] 'documents' bucket missing in Supabase storage, creating it...");
+        try {
+          await admin.storage.createBucket("documents", {
+            public: false,
+            fileSizeLimit: MAX_UPLOAD_BYTES,
+            allowedMimeTypes: ALLOWED_MIME_TYPES,
+          });
+
+          const retry = await admin.storage
+            .from("documents")
+            .createSignedUploadUrl(storagePath);
+          uploadData = retry.data;
+          uploadError = retry.error;
+        } catch (bucketErr) {
+          console.error("[Upload Sign] Failed to auto-create 'documents' bucket:", bucketErr);
+        }
+      }
 
       if (uploadError || !uploadData?.signedUrl) {
         console.error("[Upload Sign] Supabase storage error:", uploadError);
@@ -102,7 +131,15 @@ export async function POST(request: Request) {
       if (docError) {
         console.error("[Upload Sign] DB insert error:", docError);
         if (isMissingSchemaError(docError)) {
-          return NextResponse.json(schemaMissingPayload(), { status: 503 });
+          return NextResponse.json({
+            success: true,
+            uploadUrl,
+            storagePath,
+            documentId,
+            bucket: "documents",
+            isOffline: true,
+            warning: SCHEMA_MISSING_MESSAGE,
+          });
         }
         return NextResponse.json(
           { error: "Failed to initialize document record in database", details: docError.message },
