@@ -28,6 +28,7 @@ import { RadialProgress } from "@/components/radial-progress";
 import { BlindSpotCard } from "@/components/blind-spot-card";
 import { CitationBadge } from "@/components/citation-badge";
 import { computeConfidenceMetrics, type EvaluatedAnswerInput } from "@/lib/algorithms/blind-spots";
+import { simulateForgettingCurve } from "@/lib/algorithms/forgetting-curve";
 import { DEMO_ANSWERS } from "@/lib/demo/os-cs301-fixture";
 import type { MasteryClassification } from "@/types/database";
 import type { GapReportData } from "@/types/assessment";
@@ -46,6 +47,7 @@ export default function GapReportPage() {
   const { workspace, isDemo, gapReport: contextGapReport, topics } = useWorkspace();
   const [filter, setFilter] = useState<Filter>("all");
   const [serverGapReport, setServerGapReport] = useState<GapReportData | null>(null);
+  const [timeMachineDays, setTimeMachineDays] = useState<number>(0);
 
   useEffect(() => {
     if (isDemo) return;
@@ -382,6 +384,80 @@ export default function GapReportPage() {
           </div>
         </Card>
       </div>
+
+      {/* Ebbinghaus Exam-Day Forgetting-Curve Time Machine */}
+      {gapReport.topics.length > 0 && (() => {
+        const maxDays = Math.max(14, gapReport.daysRemaining || 14);
+        const sim = simulateForgettingCurve(gapReport.topics, timeMachineDays);
+        return (
+          <Card className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-brandBorder">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Activity className="h-4 w-4 text-accent" />
+                  <h3 className="text-sm font-semibold text-brandText-primary">
+                    Exam-Day Forgetting-Curve Time Machine
+                  </h3>
+                  <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-mono text-accent">
+                    Ebbinghaus Retention Model
+                  </span>
+                </div>
+                <p className="text-xs text-brandText-secondary mt-0.5">
+                  Scrub forward to simulate memory decay without spaced review and spot &quot;Silent Cliff&quot; topics before exam day.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 font-mono text-xs shrink-0">
+                <span className="px-2.5 py-1 rounded bg-surface-subtle border border-brandBorder text-brandText-primary">
+                  {timeMachineDays === 0 ? "Today (Day 0)" : `+${timeMachineDays} days`}
+                </span>
+                <span className="px-2.5 py-1 rounded bg-accent-soft text-accent font-semibold">
+                  Projected Avg: {sim.projectedAverageMastery}%
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <input
+                type="range"
+                min={0}
+                max={maxDays}
+                step={1}
+                value={Math.min(timeMachineDays, maxDays)}
+                onChange={(e) => setTimeMachineDays(Number(e.target.value))}
+                className="w-full accent-accent cursor-pointer"
+                aria-label="Simulate forgetting curve days ahead"
+              />
+              <div className="flex justify-between text-[11px] font-mono text-brandText-muted">
+                <span>Today</span>
+                <span>+{Math.round(maxDays / 2)} days</span>
+                <span>Exam Horizon (+{maxDays} days)</span>
+              </div>
+            </div>
+
+            {timeMachineDays > 0 && sim.silentCliffTopics.length > 0 && (
+              <div className="rounded-control border border-[#E8CFC4] bg-[#FEF9F2] p-3 text-xs space-y-1.5">
+                <div className="flex items-center gap-1.5 font-semibold text-[#C27803]">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    {sim.silentCliffTopics.length} Silent Cliff topic{sim.silentCliffTopics.length === 1 ? "" : "s"} projected to drop below 55% by Day +{timeMachineDays}:
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2 pt-0.5">
+                  {sim.silentCliffTopics.map((cliff) => (
+                    <span
+                      key={cliff.topicId}
+                      className="rounded bg-surface border border-[#E8CFC4] px-2 py-0.5 text-[11px] font-mono text-brandText-primary"
+                    >
+                      {cliff.topicTitle}: {Math.round(cliff.currentMastery)}% →{" "}
+                      <strong className="text-[#B84A39]">{Math.round(cliff.projectedMastery)}%</strong>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        );
+      })()}
 
       {gapReport.topics.length === 0 ? (
         <Card className="p-10 text-center space-y-4">

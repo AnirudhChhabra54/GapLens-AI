@@ -164,6 +164,13 @@ function DiagnosticContent() {
   const [activeQuizSessionToken, setActiveQuizSessionToken] = useState<string | null>(null);
   const [activeCustomQuestions, setActiveCustomQuestions] = useState<SafeQuestion[] | null>(null);
 
+  // Feynman Teach-Back Evidence-Diff Audit state
+  const [feynmanOpen, setFeynmanOpen] = useState(false);
+  const [feynmanTopicTitle, setFeynmanTopicTitle] = useState<string>("");
+  const [feynmanExplanation, setFeynmanExplanation] = useState("");
+  const [feynmanLoading, setFeynmanLoading] = useState(false);
+  const [feynmanResult, setFeynmanResult] = useState<any | null>(null);
+
   useEffect(() => {
     if (urlMode && ["diagnostic", "drill", "retest", "exam"].includes(urlMode)) {
       setMode(urlMode);
@@ -500,7 +507,223 @@ function DiagnosticContent() {
         <p className="text-xs text-brandText-muted px-1">
           {activeModeInfo?.description}
         </p>
+
+        {/* Adversarial Misconception Trap Lab + Feynman Teach-Back Bar */}
+        {topics.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+            <div className="flex flex-wrap items-center gap-2">
+              {topics.some((t) => (t.blind_spot_count || 0) > 0 || t.classification === "weak") && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={generatingQuiz}
+                  onClick={async () => {
+                    const trapTopics = topics
+                      .filter((t) => (t.blind_spot_count || 0) > 0 || t.classification === "weak")
+                      .slice(0, 3)
+                      .map((t) => t.id);
+                    setGeneratingQuiz(true);
+                    setError(null);
+                    try {
+                      const res = await fetch("/api/quiz/generate", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          workspaceId: workspace?.id || DEMO_WORKSPACE_ID,
+                          topicIds: trapTopics,
+                          targetCount: 3,
+                          difficulty: 3,
+                          quizMode: "drill",
+                          topics,
+                          documents,
+                        }),
+                      });
+                      const data = await res.json();
+                      if (res.ok && data.questions?.length > 0) {
+                        setActiveCustomQuestions(
+                          data.questions.map((g: any) => ({
+                            id: g.id,
+                            topic_id: g.topicId,
+                            question_type: g.questionType,
+                            question_text: g.questionText,
+                            options: g.options,
+                          }))
+                        );
+                        setActiveQuizId(data.quizId || null);
+                        setActiveQuizSessionToken(data.quizSessionToken || null);
+                        reset();
+                      }
+                    } finally {
+                      setGeneratingQuiz(false);
+                    }
+                  }}
+                >
+                  <AlertTriangle className="h-3.5 w-3.5 text-[#C27803]" />
+                  <span>Launch Misconception Trap Drill</span>
+                </Button>
+              )}
+
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  if (!feynmanTopicTitle && topics[0]?.title) {
+                    setFeynmanTopicTitle(topics[0].title);
+                  }
+                  setFeynmanOpen((p) => !p);
+                }}
+              >
+                <BookOpen className="h-3.5 w-3.5 text-accent" />
+                <span>{feynmanOpen ? "Hide Feynman Teach-Back Audit" : "Feynman Teach-Back Audit"}</span>
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Feynman Teach-Back Evidence-Diff Grader Panel */}
+      {feynmanOpen && topics.length > 0 && (
+        <Card className="space-y-4 border-accent/30">
+          <div className="flex items-center justify-between border-b border-brandBorder pb-3">
+            <div>
+              <h3 className="text-sm font-semibold text-brandText-primary flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-accent" />
+                <span>Feynman Teach-Back Evidence-Diff Grader</span>
+              </h3>
+              <p className="text-xs text-brandText-secondary mt-0.5">
+                Explain a concept in your own words. GapLens audits every claim against your textbook chunks for accuracy, omissions, and contradictions.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFeynmanOpen(false)}
+              className="p-1 text-brandText-muted hover:text-brandText-primary"
+              aria-label="Close Feynman panel"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-brandText-primary mb-1">
+                Select Topic to Teach
+              </label>
+              <select
+                value={feynmanTopicTitle || topics[0]?.title || ""}
+                onChange={(e) => setFeynmanTopicTitle(e.target.value)}
+                className="w-full rounded-control border border-brandBorder bg-surface px-3 py-2 text-xs text-brandText-primary focus:border-accent focus:outline-none"
+              >
+                {topics.map((t) => (
+                  <option key={t.id} value={t.title}>
+                    {t.title} ({Math.round(t.current_mastery ?? 45)}%)
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-brandText-primary mb-1">
+                Your Explanation (Teach it clearly without notes)
+              </label>
+              <textarea
+                rows={3}
+                value={feynmanExplanation}
+                onChange={(e) => setFeynmanExplanation(e.target.value)}
+                placeholder="Explain the core mechanism, edge cases, and why it works..."
+                className="w-full rounded-control border border-brandBorder bg-surface px-3 py-2 text-xs text-brandText-primary focus:border-accent focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={feynmanLoading || feynmanExplanation.trim().length < 15}
+              onClick={async () => {
+                setFeynmanLoading(true);
+                setError(null);
+                try {
+                  const res = await fetch("/api/feynman/evaluate", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      workspaceId: workspace?.id || DEMO_WORKSPACE_ID,
+                      topicTitle: feynmanTopicTitle || topics[0]?.title || "Course Topic",
+                      explanation: feynmanExplanation,
+                      topics,
+                      documents,
+                    }),
+                  });
+                  const data = await res.json();
+                  if (!res.ok || !data.success) {
+                    throw new Error(data.error || "Failed to audit explanation.");
+                  }
+                  setFeynmanResult(data);
+                } catch (err: any) {
+                  setError(err?.message || "Feynman audit failed.");
+                } finally {
+                  setFeynmanLoading(false);
+                }
+              }}
+            >
+              <span>{feynmanLoading ? "Auditing against course evidence..." : "Run Evidence-Diff Audit"}</span>
+            </Button>
+          </div>
+
+          {feynmanResult && (
+            <div className="space-y-3 pt-3 border-t border-brandBorder text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-brandText-primary">
+                  Audit Summary: {feynmanResult.summaryFeedback}
+                </span>
+                <span className="font-mono font-semibold px-2.5 py-1 rounded bg-accent-soft text-accent">
+                  Rigor Score: {Math.round(feynmanResult.rigorScore)}/100
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="rounded-control border border-[#CDE5DB] bg-[#F4F8F6] p-3 space-y-1.5">
+                  <span className="font-mono text-[10px] uppercase font-semibold text-status-success block">
+                    Verified Claims ({feynmanResult.verifiedClaims?.length || 0})
+                  </span>
+                  {(feynmanResult.verifiedClaims || []).map((c: any, i: number) => (
+                    <div key={i} className="text-[11px] text-brandText-primary">
+                      • {c.claim} <span className="text-brandText-muted font-mono">({c.pageRange})</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-control border border-[#E8CFC4] bg-[#FEF9F2] p-3 space-y-1.5">
+                  <span className="font-mono text-[10px] uppercase font-semibold text-[#C27803] block">
+                    Omitted Mechanisms ({feynmanResult.omittedMechanisms?.length || 0})
+                  </span>
+                  {(feynmanResult.omittedMechanisms || []).map((o: any, i: number) => (
+                    <div key={i} className="text-[11px] text-brandText-primary">
+                      • <strong>{o.mechanism}:</strong> {o.whyItMatters}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-control border border-[#E4C9C7] bg-status-dangerSoft p-3 space-y-1.5">
+                  <span className="font-mono text-[10px] uppercase font-semibold text-status-danger block">
+                    Contradictions ({feynmanResult.contradictions?.length || 0})
+                  </span>
+                  {(feynmanResult.contradictions || []).length === 0 ? (
+                    <span className="text-[11px] text-brandText-muted">No factual contradictions detected.</span>
+                  ) : (
+                    (feynmanResult.contradictions || []).map((x: any, i: number) => (
+                      <div key={i} className="text-[11px] text-brandText-primary">
+                        • <strong>{x.flawedStatement}</strong> → {x.correction}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* =========================================================================
           ASSESSMENT BODY: QUESTION VIEW OR RESULTS

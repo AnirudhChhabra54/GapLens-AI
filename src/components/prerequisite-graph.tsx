@@ -60,6 +60,35 @@ export function PrerequisiteGraph({
     return topics.filter((t) => dependentIds.includes(t.id));
   };
 
+  // Transitive BFS cascade unblock simulator
+  const getTransitiveCascade = (rootId: string) => {
+    const visited = new Set<string>();
+    const queue = [rootId];
+    while (queue.length > 0) {
+      const curr = queue.shift()!;
+      for (const edge of prerequisites) {
+        if (edge.prerequisite_topic_id === curr && !visited.has(edge.topic_id) && edge.topic_id !== rootId) {
+          visited.add(edge.topic_id);
+          queue.push(edge.topic_id);
+        }
+      }
+    }
+    const unlockedTopics = topics.filter((t) => visited.has(t.id));
+    const rootTopic = topics.find((t) => t.id === rootId);
+    const rootGain = rootTopic ? Math.max(0, 85 - (rootTopic.current_mastery ?? 45)) : 0;
+    const totalWeight = topics.reduce((s, t) => s + (t.exam_weight || 1 / Math.max(1, topics.length)), 0) || 1;
+    const rootWeight = rootTopic?.exam_weight || 1 / Math.max(1, topics.length);
+    const downstreamBoost = unlockedTopics.length * 2.5;
+    const projectedLift = Number(((rootGain * (rootWeight / totalWeight)) + downstreamBoost).toFixed(1));
+    return {
+      unlockedIds: visited,
+      unlockedTopics,
+      projectedLift,
+    };
+  };
+
+  const selectedCascade = selectedTopic ? getTransitiveCascade(selectedTopic.id) : null;
+
   const handleTopicClick = (topic: TopicRow) => {
     setSelectedTopic(topic);
     if (onSelectTopic) onSelectTopic(topic);
@@ -120,6 +149,7 @@ export function PrerequisiteGraph({
             <div className="space-y-2">
               {unitTopics.map((topic) => {
                 const isSelected = selectedTopic?.id === topic.id;
+                const isCascadeUnlocked = selectedCascade?.unlockedIds.has(topic.id) ?? false;
                 const status = topic.classification || "unassessed";
                 const mastery = topic.current_mastery ?? 45;
 
@@ -132,6 +162,8 @@ export function PrerequisiteGraph({
                       "w-full text-left p-3 rounded-control border transition-all relative group bg-surface",
                       isSelected
                         ? "border-accent ring-1 ring-accent bg-accent-soft/30 shadow-sm"
+                        : isCascadeUnlocked
+                        ? "border-[#C27803]/60 bg-[#FEF9F2] ring-1 ring-[#C27803]/25"
                         : "border-brandBorder hover:border-brandBorder-strong hover:bg-surface-subtle"
                     )}
                   >
@@ -184,7 +216,12 @@ export function PrerequisiteGraph({
               <h4 className="text-sm font-semibold text-brandText-primary">{selectedTopic.title}</h4>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedCascade && selectedCascade.unlockedTopics.length > 0 && (
+                <span className="rounded-control bg-[#FEF5E7] border border-[#E8CFC4] px-2.5 py-1 text-[#C27803] font-mono text-[11px] font-semibold">
+                  Unblocks {selectedCascade.unlockedTopics.length} downstream • +{selectedCascade.projectedLift}% est. readiness
+                </span>
+              )}
               <span className="rounded-control bg-surface-subtle border border-brandBorder px-2.5 py-1 text-brandText-secondary text-[11px] font-mono">
                 Unit: {selectedTopic.unit_module || "Core"}
               </span>
