@@ -47,3 +47,6 @@ supabase/.temp/
 
 # Classified internal documentation, specs, audits and skills
 classified/
+
+# Local improvement plans
+improvemments.md
