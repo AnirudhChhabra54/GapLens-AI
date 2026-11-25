@@ -50,6 +50,7 @@ interface WorkspaceContextType {
   workspace: WorkspaceRow;
   isLoggedIn: boolean;
   isDemo: boolean;
+  isHydrating: boolean;
   documents: DocumentRow[];
   topics: TopicRow[];
   prerequisites: TopicPrerequisiteRow[];
@@ -222,6 +223,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [workspace, setWorkspace] = useState<WorkspaceRow>(DEMO_WORKSPACE);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(true);
   const [isDemo, setIsDemo] = useState<boolean>(true);
+  const [isHydrating, setIsHydrating] = useState<boolean>(true);
   const [dailyMinutes, setDailyMinutesState] = useState<number>(60);
   const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
   const [retestedTopicScores, setRetestedTopicScores] = useState<Record<string, number>>({});
@@ -426,7 +428,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         // Fallback to default demo
+      } finally {
+        setIsHydrating(false);
       }
+    } else {
+      setIsHydrating(false);
     }
   }, []);
 
@@ -813,6 +819,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         workspace,
         isLoggedIn,
         isDemo,
+        isHydrating,
         documents,
         topics,
         prerequisites,

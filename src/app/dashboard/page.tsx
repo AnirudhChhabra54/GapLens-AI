@@ -159,7 +159,14 @@ export default function DashboardPage() {
               </span>
               <div className="flex items-center gap-1 text-xs text-accent font-medium">
                 <TrendingUp className="h-3.5 w-3.5" />
-                <span>{isDemo ? "+8% prior gain" : "Prior gain"}</span>
+                <span>
+                  {(() => {
+                    const avg = readiness?.averageMastery ?? 0;
+                    if (!readiness?.assessedTopicsCount) return "Untested baseline";
+                    const delta = Math.round(avg - 45);
+                    return `${delta >= 0 ? "+" : ""}${delta}% vs 45% prior`;
+                  })()}
+                </span>
               </div>
             </div>
             <p className="text-xs text-brandText-secondary leading-relaxed">

@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { useWorkspace } from "@/components/workspace-context";
 import { PrerequisiteGraph } from "@/components/prerequisite-graph";
+import { computeTopicExamWeights } from "@/lib/algorithms/topic-mapper";
 import { DEMO_DOCUMENTS, DEMO_PREREQUISITES } from "@/lib/demo/os-cs301-fixture";
 import type { DocumentRow } from "@/types/database";
 import { Card, PageHeader, StatusBadge, Button } from "@/components/ui/design-system";
@@ -77,6 +78,10 @@ export default function MaterialsPage() {
   // Topic Tree state (from GET /api/topics/tree)
   const [topicTree, setTopicTree] = useState<any[] | null>(null);
   const [loadingTree, setLoadingTree] = useState(false);
+
+  // Past-paper mapping verification state (for needs_review items)
+  const [mappedQuestionsReview, setMappedQuestionsReview] = useState<any[]>([]);
+  const [showReviewPanel, setShowReviewPanel] = useState(false);
 
   // Sync with context initialDocs
   useEffect(() => {
@@ -366,8 +371,16 @@ export default function MaterialsPage() {
         });
         setWorkspaceTopics(updatedTopics);
       }
+      if (Array.isArray(data.mappedQuestions) && data.mappedQuestions.length > 0) {
+        setMappedQuestionsReview(data.mappedQuestions);
+        if (data.needsReviewCount > 0) {
+          setShowReviewPanel(true);
+        }
+      }
       setActionSuccess(
-        `Mapped ${data.mappedCount} past-paper questions to syllabus topics and updated exam weights!`
+        data.needsReviewCount > 0
+          ? `Mapped ${data.mappedCount} past-paper questions (${data.needsReviewCount} flagged for manual review below).`
+          : `Mapped ${data.mappedCount} past-paper questions to syllabus topics and updated exam weights!`
       );
     } catch (err: any) {
       setUploadError(err.message || "Failed to map past paper.");
@@ -928,15 +941,129 @@ export default function MaterialsPage() {
 
       {/* Action Notification Banner */}
       {actionSuccess && (
-        <div className="p-3.5 rounded-card bg-[#F4F8F6] border border-[#CDE5DB] text-status-success text-xs flex items-center justify-between">
+        <div className="p-3.5 rounded-card bg-[#F4F8F6] border border-[#CDE5DB] text-status-success text-xs flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 shrink-0" />
             <span>{actionSuccess}</span>
           </div>
-          <button type="button" onClick={() => setActionSuccess(null)} className="text-xs hover:opacity-75">
-            ✕
-          </button>
+          <div className="flex items-center gap-3 shrink-0">
+            {mappedQuestionsReview.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowReviewPanel((p) => !p)}
+                className="underline font-medium hover:opacity-80"
+              >
+                {showReviewPanel ? "Hide review" : `Review mappings (${mappedQuestionsReview.length})`}
+              </button>
+            )}
+            <button type="button" onClick={() => setActionSuccess(null)} className="text-xs hover:opacity-75">
+              ✕
+            </button>
+          </div>
         </div>
+      )}
+
+      {/* Past-Paper Low-Confidence Mapping Verification Panel */}
+      {showReviewPanel && mappedQuestionsReview.length > 0 && (
+        <Card className="space-y-4 border-accent/30">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-brandBorder">
+            <div>
+              <h3 className="text-sm font-semibold text-brandText-primary flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-[#C27803]" />
+                <span>Review Past-Paper Topic Mappings</span>
+              </h3>
+              <p className="text-xs text-brandText-secondary mt-0.5">
+                Questions below 60% confidence are flagged for manual verification. Reassign topics and recalculate exam weights.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  const weightMap = computeTopicExamWeights(
+                    topics,
+                    mappedQuestionsReview.map((q) => ({
+                      mapped_topic_id: q.mappedTopicId,
+                      marks: q.marks || 5,
+                    })) as any
+                  );
+                  const updated = topics.map((t) => {
+                    const w = weightMap.get(t.id);
+                    return w
+                      ? {
+                          ...t,
+                          exam_frequency: w.examFrequency,
+                          exam_total_marks: w.examTotalMarks,
+                          exam_weight: w.examWeight,
+                        }
+                      : t;
+                  });
+                  setWorkspaceTopics(updated);
+                  setActionSuccess("Recalculated exam weights from verified past-paper mappings!");
+                  setShowReviewPanel(false);
+                }}
+              >
+                <span>Apply & recalculate weights</span>
+              </Button>
+              <Button variant="quiet" size="sm" onClick={() => setShowReviewPanel(false)}>
+                Close
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+            {mappedQuestionsReview.map((q, qIdx) => (
+              <div
+                key={`${q.questionNumber}-${qIdx}`}
+                className={`rounded-control border p-3 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                  q.needsReview
+                    ? "border-[#E8CFC4] bg-[#FEF9F2]"
+                    : "border-brandBorder bg-surface-subtle"
+                }`}
+              >
+                <div className="space-y-1 flex-1 min-w-0">
+                  <div className="flex items-center gap-2 font-mono text-[11px]">
+                    <span className="font-semibold text-brandText-primary">Q{q.questionNumber}</span>
+                    <span className="text-brandText-muted">• {q.marks} marks</span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] ${
+                        q.needsReview
+                          ? "bg-[#FEF5E7] text-[#C27803] font-semibold"
+                          : "bg-accent-soft text-accent"
+                      }`}
+                    >
+                      {Math.round((q.mappingConfidence || 0) * 100)}% confidence{q.needsReview ? " • Needs review" : ""}
+                    </span>
+                  </div>
+                  <p className="text-brandText-secondary line-clamp-2">{q.questionText}</p>
+                </div>
+
+                <select
+                  value={q.mappedTopicId || ""}
+                  onChange={(e) => {
+                    const nextTopicId = e.target.value;
+                    setMappedQuestionsReview((prev) =>
+                      prev.map((item, idx) =>
+                        idx === qIdx
+                          ? { ...item, mappedTopicId: nextTopicId, needsReview: false, mappingConfidence: 1.0 }
+                          : item
+                      )
+                    );
+                  }}
+                  className="rounded-control border border-brandBorder bg-surface px-2.5 py-1.5 text-xs text-brandText-primary focus:border-accent focus:outline-none sm:w-56 shrink-0"
+                  aria-label={`Assign topic for question ${q.questionNumber}`}
+                >
+                  {topics.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        </Card>
       )}
 
       {/* =========================================================================

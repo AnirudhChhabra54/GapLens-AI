@@ -9,6 +9,7 @@ import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
 import { isMissingSchemaError } from "@/lib/supabase/errors";
+import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rate-limit";
 import { parsePdfBuffer } from "@/lib/rag/pdf-parser";
 import { chunkExtractedPages } from "@/lib/rag/chunker";
 import { embedBatch, generateDeterministic768dEmbedding } from "@/lib/ai/gemini";
@@ -40,6 +41,11 @@ export async function POST(
     const auth = await authorizeWorkspace(workspaceId);
     if (!auth.ok) {
       return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
+
+    const rl = checkRateLimit(`doc-reindex:${auth.userId}`, 20, 60_000);
+    if (!rl.allowed) {
+      return rateLimitExceededResponse(rl.retryAfterSeconds);
     }
 
     if (auth.isDemo || !isSupabaseAdminConfigured()) {

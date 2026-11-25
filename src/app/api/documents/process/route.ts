@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rate-limit";
 import {
   isMissingSchemaError,
   schemaMissingPayload,
@@ -101,6 +102,11 @@ export async function POST(request: Request) {
     const auth = await authorizeWorkspace(workspaceId);
     if (!auth.ok) {
       return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
+
+    const rl = checkRateLimit(`doc-process:${auth.userId}`, 20, 60_000);
+    if (!rl.allowed) {
+      return rateLimitExceededResponse(rl.retryAfterSeconds);
     }
 
     if (auth.userId) {

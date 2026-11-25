@@ -10,6 +10,7 @@ import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
 import { isMissingSchemaError } from "@/lib/supabase/errors";
+import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rate-limit";
 import {
   mapPastPaperQuestions,
   computeTopicExamWeights,
@@ -52,6 +53,11 @@ export async function POST(request: Request) {
     const auth = await authorizeWorkspace(workspaceId);
     if (!auth.ok) {
       return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
+
+    const rl = checkRateLimit(`papers-map:${auth.userId}`, 20, 60_000);
+    if (!rl.allowed) {
+      return rateLimitExceededResponse(rl.retryAfterSeconds);
     }
 
     const isLiveDb = isSupabaseAdminConfigured() && !auth.isDemo;

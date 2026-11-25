@@ -35,7 +35,7 @@ const NAV_ITEMS = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { workspace, profile, isLoggedIn, isDemo, loginAsDemo, logout, updateWorkspaceSettings } = useWorkspace();
+  const { workspace, profile, isLoggedIn, isDemo, isHydrating, loginAsDemo, logout, updateWorkspaceSettings } = useWorkspace();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -47,10 +47,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isPublicRoute = pathname === "/" || pathname === "/login";
 
   React.useEffect(() => {
-    if (!isPublicRoute && !isLoggedIn) {
+    if (!isHydrating && !isPublicRoute && !isLoggedIn) {
       router.replace("/login");
     }
-  }, [isPublicRoute, isLoggedIn, router]);
+  }, [isHydrating, isPublicRoute, isLoggedIn, router]);
 
   React.useEffect(() => {
     if (workspace) {
@@ -59,6 +59,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       setSettingsMinutes(workspace.daily_study_minutes || 60);
     }
   }, [workspace]);
+
+  if (!isPublicRoute && isHydrating) {
+    return (
+      <div className="min-h-screen bg-canvas flex items-center justify-center">
+        <div className="text-xs font-mono text-brandText-muted animate-pulse">
+          Loading workspace...
+        </div>
+      </div>
+    );
+  }
 
   if (!isPublicRoute && !isLoggedIn) {
     return null;
