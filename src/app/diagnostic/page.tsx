@@ -161,6 +161,7 @@ function DiagnosticContent() {
   const [generatedQuestions, setGeneratedQuestions] = useState<any[] | null>(null);
   const [showGeneratorModal, setShowGeneratorModal] = useState(false);
   const [activeQuizId, setActiveQuizId] = useState<string | null>(null);
+  const [activeQuizSessionToken, setActiveQuizSessionToken] = useState<string | null>(null);
   const [activeCustomQuestions, setActiveCustomQuestions] = useState<SafeQuestion[] | null>(null);
 
   useEffect(() => {
@@ -208,6 +209,7 @@ function DiagnosticContent() {
       }
       setGeneratedQuestions(data.questions || []);
       setActiveQuizId(data.quizId || null);
+      setActiveQuizSessionToken(data.quizSessionToken || null);
       setShowGeneratorModal(true);
     } catch (err: any) {
       setError(err?.message || "Failed to run AI question generator.");
@@ -243,6 +245,7 @@ function DiagnosticContent() {
             }));
             setActiveCustomQuestions(mapped);
             setActiveQuizId(data.quizId || null);
+            setActiveQuizSessionToken(data.quizSessionToken || null);
           }
         })
         .catch(() => undefined);
@@ -366,6 +369,7 @@ function DiagnosticContent() {
       const payload = {
         quizId: activeQuizId || (isDemo ? DEMO_QUIZ_ID : crypto.randomUUID()),
         workspaceId: workspace?.id || DEMO_WORKSPACE_ID,
+        quizSessionToken: activeQuizSessionToken,
         answers: questions.map((q) => ({
           questionId: q.id,
           response: responses[q.id],
@@ -403,6 +407,7 @@ function DiagnosticContent() {
       const payload = {
         quizId: activeQuizId || (isDemo ? DEMO_QUIZ_ID : crypto.randomUUID()),
         workspaceId: workspace?.id || DEMO_WORKSPACE_ID,
+        quizSessionToken: activeQuizSessionToken,
         answers: questions.map((q) => ({
           questionId: q.id,
           response: responses[q.id] || "No response provided before time expired.",

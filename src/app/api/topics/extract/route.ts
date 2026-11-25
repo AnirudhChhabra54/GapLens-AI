@@ -11,6 +11,7 @@ import { extractTopicHierarchy } from "@/lib/algorithms/topic-mapper";
 import { DEMO_CHUNKS } from "@/lib/demo/os-cs301-fixture";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
 import { isMissingSchemaError } from "@/lib/supabase/errors";
+import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rate-limit";
 
 const ExtractTopicsRequestSchema = z.object({
   workspaceId: z.string().uuid("Invalid workspace ID"),
@@ -35,6 +36,11 @@ export async function POST(request: Request) {
     const auth = await authorizeWorkspace(workspaceId);
     if (!auth.ok) {
       return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
+
+    const rl = checkRateLimit(`topics-extract:${auth.userId}`, 20, 60_000);
+    if (!rl.allowed) {
+      return rateLimitExceededResponse(rl.retryAfterSeconds);
     }
 
     const isLiveDb = isSupabaseAdminConfigured() && !auth.isDemo;

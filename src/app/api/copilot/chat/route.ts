@@ -13,6 +13,7 @@ import { embedText } from "@/lib/ai/gemini";
 import { DEMO_CHUNKS, DEMO_TOPICS } from "@/lib/demo/os-cs301-fixture";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rate-limit";
 import type { CopilotChatResponse } from "@/types/planner";
 
 const CopilotChatRequestSchema = z.object({
@@ -66,6 +67,11 @@ export async function POST(request: Request) {
     const auth = await authorizeWorkspace(workspaceId);
     if (!auth.ok) {
       return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
+
+    const rl = checkRateLimit(`copilot:${auth.userId}`, 40, 60_000);
+    if (!rl.allowed) {
+      return rateLimitExceededResponse(rl.retryAfterSeconds);
     }
 
     let candidateChunks: any[] = [];

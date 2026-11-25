@@ -260,11 +260,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
             if (parsed.revisionSchedule) setRevisionSchedule(parsed.revisionSchedule);
             else setRevisionSchedule(createEmptySchedule(restoredWorkspace));
 
-            // Hydrate gap report from server
+            // Hydrate gap report from server only if it contains non-empty topics
+            // (prevents unmigrated/empty server responses from overwriting local progress)
             fetch(`/api/gap-report?workspaceId=${restoredWorkspace.id}`)
               .then((r) => r.json())
               .then((d) => {
-                if (d && !d.error) setGapReport(d);
+                if (d && !d.error && Array.isArray(d.topics) && d.topics.length > 0) {
+                  setGapReport(d);
+                }
               })
               .catch(() => undefined);
 
@@ -292,6 +295,90 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
               .eq("workspace_id", restoredWorkspace.id)
               .then(({ data, error }) => {
                 if (!error && data && data.length > 0) setPrerequisites(data as TopicPrerequisiteRow[]);
+              });
+
+            // Hydrate active revision plan & tasks from live Supabase
+            supabase
+              .from("revision_plans")
+              .select("*")
+              .eq("workspace_id", restoredWorkspace.id)
+              .eq("is_active", true)
+              .order("updated_at", { ascending: false })
+              .limit(1)
+              .maybeSingle()
+              .then(({ data: rawPlanRow, error: planErr }) => {
+                const planRow = rawPlanRow as any;
+                if (planErr || !planRow) return;
+                supabase
+                  .from("revision_tasks")
+                  .select("*")
+                  .eq("plan_id", planRow.id)
+                  .order("day_number", { ascending: true })
+                  .order("task_order", { ascending: true })
+                  .then(({ data: rawTaskRows, error: taskErr }) => {
+                    const taskRows = rawTaskRows as any[] | null;
+                    if (taskErr || !taskRows) return;
+                    const dayMap = new Map<number, any[]>();
+                    const completedIds: string[] = [];
+                    let completedMinutes = 0;
+
+                    for (const t of taskRows) {
+                      if (t.status === "completed") {
+                        completedIds.push(t.id);
+                        completedMinutes += t.allocated_minutes || 0;
+                      }
+                      const list = dayMap.get(t.day_number) || [];
+                      list.push({
+                        id: t.id,
+                        planId: t.plan_id,
+                        topicId: t.topic_id,
+                        topicTitle: (t.title || "").includes(": ")
+                          ? (t.title || "").slice((t.title || "").indexOf(": ") + 2).trim()
+                          : t.title,
+                        dayNumber: t.day_number,
+                        taskOrder: t.task_order,
+                        taskType: t.task_type,
+                        title: t.title,
+                        description: t.description || "",
+                        allocatedMinutes: t.allocated_minutes,
+                        priorityScore: t.priority_score,
+                        status: t.status,
+                        sourceChunkId: t.source_chunk_id,
+                        citationReference: t.citation_reference,
+                        completedAt: t.completed_at,
+                      });
+                      dayMap.set(t.day_number, list);
+                    }
+
+                    const days = Array.from(dayMap.entries())
+                      .sort((a, b) => a[0] - b[0])
+                      .map(([dayNumber, dayTasks]) => ({
+                        dayNumber,
+                        date: "",
+                        availableMinutes: planRow.daily_minutes,
+                        allocatedMinutes: dayTasks.reduce((s, dt) => s + (dt.allocatedMinutes || 0), 0),
+                        tasks: dayTasks,
+                      }));
+
+                    if (days.length > 0) {
+                      setRevisionSchedule({
+                        id: planRow.id,
+                        workspaceId: planRow.workspace_id,
+                        version: planRow.version,
+                        examDate: planRow.exam_date,
+                        dailyMinutes: planRow.daily_minutes,
+                        totalDays: planRow.total_days,
+                        totalAllocatedMinutes: planRow.total_allocated_minutes,
+                        totalAvailableMinutes: planRow.total_days * planRow.daily_minutes,
+                        completedMinutes,
+                        isActive: planRow.is_active,
+                        days,
+                        deferredTasksCount: 0,
+                      });
+                      setDailyMinutesState(planRow.daily_minutes);
+                      if (completedIds.length > 0) setCompletedTaskIds(completedIds);
+                    }
+                  });
               });
           }
 
@@ -377,7 +464,21 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           revisionSchedule: isDemo ? undefined : revisionSchedule,
           ...updates,
         };
-        localStorage.setItem("gaplens_auth_state", JSON.stringify(current));
+        try {
+          localStorage.setItem("gaplens_auth_state", JSON.stringify(current));
+        } catch {
+          // QuotaExceededError fallback: strip bulky extracted_text from documents so mastery/progress still persist
+          const compactDocs = Array.isArray(current.documents)
+            ? current.documents.map((d: any) => {
+                const { extracted_text: _omitted, ...rest } = d || {};
+                return rest;
+              })
+            : [];
+          localStorage.setItem(
+            "gaplens_auth_state",
+            JSON.stringify({ ...current, documents: compactDocs })
+          );
+        }
       } catch {
         // Ignore storage errors
       }

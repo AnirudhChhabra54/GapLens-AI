@@ -17,7 +17,8 @@ import {
 } from "@/lib/algorithms/question-generator";
 import type { SafeQuizQuestion } from "@/types/assessment";
 import { DEMO_TOPICS, DEMO_CHUNKS, DEMO_QUIZ_QUESTIONS } from "@/lib/demo/os-cs301-fixture";
-import { storeDemoQuiz } from "@/lib/demo/demo-quiz-cache";
+import { storeDemoQuiz, sealQuizSession } from "@/lib/demo/demo-quiz-cache";
+import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rate-limit";
 
 const GenerateQuizRequestSchema = z.object({
   workspaceId: z.string().uuid("Invalid workspace ID"),
@@ -46,6 +47,11 @@ export async function POST(request: Request) {
     const auth = await authorizeWorkspace(workspaceId);
     if (!auth.ok) {
       return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
+
+    const rl = checkRateLimit(`quiz-gen:${auth.userId}`, 25, 60_000);
+    if (!rl.allowed) {
+      return rateLimitExceededResponse(rl.retryAfterSeconds);
     }
 
     const isLiveDb = isSupabaseAdminConfigured() && !auth.isDemo;
@@ -287,6 +293,7 @@ export async function POST(request: Request) {
       }
     }
 
+    let quizSessionToken: string | null = null;
     if (!isLiveDb || isSchemaMissing) {
       // Assign valid UUIDs in mock mode and cache questions server-side
       generated.forEach((q) => {
@@ -313,6 +320,7 @@ export async function POST(request: Request) {
         created_at: new Date().toISOString(),
       }));
       storeDemoQuiz(quizId, cachedQuestions as any);
+      quizSessionToken = sealQuizSession(quizId, cachedQuestions as any);
     }
 
     // Strip answer keys and rubrics for client runner
@@ -324,6 +332,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       quizId,
+      quizSessionToken,
       workspaceId,
       quizMode,
       totalQuestions: safeQuestions.length,

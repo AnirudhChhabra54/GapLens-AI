@@ -22,7 +22,8 @@ import {
   DEMO_TOPICS,
   DEMO_ANSWERS,
 } from "@/lib/demo/os-cs301-fixture";
-import { getDemoQuizQuestions } from "@/lib/demo/demo-quiz-cache";
+import { getDemoQuizQuestions, unsealQuizSession } from "@/lib/demo/demo-quiz-cache";
+import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rate-limit";
 
 const AnswerSubmissionSchema = z.object({
   questionId: z.string(),
@@ -37,6 +38,7 @@ const AnswerSubmissionSchema = z.object({
 const EvaluateQuizRequestSchema = z.object({
   quizId: z.string(),
   workspaceId: z.string().uuid("Invalid workspace ID"),
+  quizSessionToken: z.string().nullable().optional(),
   answers: z.array(AnswerSubmissionSchema).min(1, "At least one answer must be submitted"),
 });
 
@@ -52,10 +54,15 @@ export async function POST(request: Request) {
       );
     }
 
-    const { quizId, workspaceId, answers } = parsed.data;
+    const { quizId, workspaceId, quizSessionToken, answers } = parsed.data;
     const auth = await authorizeWorkspace(workspaceId);
     if (!auth.ok) {
       return NextResponse.json({ error: auth.error }, { status: auth.status });
+    }
+
+    const rl = checkRateLimit(`quiz-eval:${auth.userId}`, 30, 60_000);
+    if (!rl.allowed) {
+      return rateLimitExceededResponse(rl.retryAfterSeconds);
     }
 
     const isLiveDb = isSupabaseAdminConfigured() && !auth.isDemo;
@@ -114,7 +121,7 @@ export async function POST(request: Request) {
       }
 
       if (isSchemaMissing) {
-        const cached = getDemoQuizQuestions(quizId);
+        const cached = getDemoQuizQuestions(quizId) || unsealQuizSession(quizId, quizSessionToken);
         if (cached && cached.length > 0) {
           questions = cached.filter((q) => submittedIds.includes(q.id));
         }
@@ -235,7 +242,7 @@ export async function POST(request: Request) {
           );
         }
       } else {
-        const cached = getDemoQuizQuestions(quizId);
+        const cached = getDemoQuizQuestions(quizId) || unsealQuizSession(quizId, quizSessionToken);
         if (cached && cached.length > 0) {
           questions = cached.filter((q) => submittedIds.includes(q.id));
           if (questions.length !== submittedIds.length) {
