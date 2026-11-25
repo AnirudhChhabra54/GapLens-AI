@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { isMissingSchemaError } from "@/lib/supabase/errors";
 import { parsePdfBuffer } from "@/lib/rag/pdf-parser";
 import { chunkExtractedPages } from "@/lib/rag/chunker";
 import { embedBatch, generateDeterministic768dEmbedding } from "@/lib/ai/gemini";
@@ -62,7 +63,22 @@ export async function POST(
       .eq("workspace_id", workspaceId)
       .maybeSingle();
 
-    if (fetchErr || !doc) {
+    if (fetchErr) {
+      if (isMissingSchemaError(fetchErr)) {
+        return NextResponse.json({
+          success: true,
+          documentId,
+          isOffline: true,
+          status: "indexed",
+          message: "Document reindex acknowledged in offline mode (database schema not yet initialized).",
+        });
+      }
+      return NextResponse.json(
+        { error: "Failed to load document record", details: fetchErr.message },
+        { status: 500 }
+      );
+    }
+    if (!doc) {
       return NextResponse.json(
         { error: "Document not found or inaccessible" },
         { status: 404 }

@@ -138,7 +138,7 @@ const CONFIDENCE_OPTIONS: Array<{ id: ConfidenceLevel; label: string; descriptio
 ];
 
 function DiagnosticContent() {
-  const { workspace, topics, applyAssessmentResults, isDemo } = useWorkspace();
+  const { workspace, topics, documents, applyAssessmentResults, isDemo } = useWorkspace();
   const searchParams = useSearchParams();
   const urlMode = searchParams.get("mode") as QuizMode | null;
   const urlTopicId = searchParams.get("topicId");
@@ -198,6 +198,8 @@ function DiagnosticContent() {
           difficulty: 2,
           quizMode: mode,
           topicIds: urlTopicId ? [urlTopicId] : undefined,
+          topics,
+          documents,
         }),
       });
       const data = await res.json();
@@ -225,6 +227,8 @@ function DiagnosticContent() {
           topicIds: [urlTopicId],
           targetCount: 3,
           quizMode: mode,
+          topics,
+          documents,
         }),
       })
         .then((res) => res.json())
@@ -243,7 +247,7 @@ function DiagnosticContent() {
         })
         .catch(() => undefined);
     }
-  }, [urlTopicId, workspace?.id, isDemo, activeCustomQuestions, mode]);
+  }, [urlTopicId, workspace?.id, isDemo, activeCustomQuestions, mode, topics, documents]);
 
   const weakTopicIds = useMemo(
     () => new Set(topics.filter((t) => t.classification === "weak").map((t) => t.id)),
@@ -294,6 +298,60 @@ function DiagnosticContent() {
     reset();
   };
 
+  const applyEvaluationToWorkspace = (evaluation: QuizEvaluationResponse, data: any) => {
+    setResult(evaluation);
+
+    const blindSpotTopicIds = new Set(
+      evaluation.answers.filter((a) => a.isBlindSpot).map((a) => a.topicId)
+    );
+
+    const blindSpotByTopic = new Map(
+      evaluation.answers
+        .filter((a) => a.isBlindSpot)
+        .map((answer) => {
+          const question =
+            questions.find((q) => q.id === answer.questionId) ||
+            SAFE_QUIZ_QUESTIONS.find((q) => q.id === answer.questionId);
+          const topic = topics.find((t) => t.id === answer.topicId);
+          const citation = answer.citation;
+          const item = {
+            topicId: answer.topicId,
+            topicTitle: topic?.title || "Assessed topic",
+            questionId: answer.questionId,
+            questionText: question?.question_text || "Diagnostic question",
+            studentResponse: responses[answer.questionId] || "",
+            correctAnswer: answer.correctAnswer,
+            confidence: answer.confidence,
+            evidenceQuote: citation?.quote || answer.explanation || "",
+            citation,
+            remedyAction: citation
+              ? `Review ${citation.documentName} p. ${citation.pageStart}-${citation.pageEnd} and re-test this concept.`
+              : "Review the source section and re-test this concept.",
+          };
+          return [answer.topicId, item] as const;
+        })
+    );
+
+    applyAssessmentResults(
+      Object.entries(evaluation.masteryDeltas).map(([topicId, delta]) => ({
+        topicId,
+        masteryScore: delta.current,
+        classification: delta.classification,
+        evidenceLevel: delta.evidenceLevel,
+        totalAttempts: delta.totalAttempts,
+        correctAttempts: delta.correctAttempts,
+        isBlindSpot: blindSpotTopicIds.has(topicId),
+        blindSpot: blindSpotByTopic.get(topicId),
+      }))
+    );
+
+    setPlanMessage(
+      data?.planUpdated
+        ? "Pending revision tasks were automatically prioritized based on your updated mastery."
+        : "Workspace plan refreshed with new Bayesian mastery evidence."
+    );
+  };
+
   const submit = async () => {
     if (!allAnswered) {
       setError("Please answer every question and select your confidence level before submitting.");
@@ -330,58 +388,7 @@ function DiagnosticContent() {
         throw new Error(data?.error || "The evaluation service rejected this submission.");
       }
 
-      const evaluation = data as QuizEvaluationResponse;
-      setResult(evaluation);
-
-      const blindSpotTopicIds = new Set(
-        evaluation.answers.filter((a) => a.isBlindSpot).map((a) => a.topicId)
-      );
-
-      const blindSpotByTopic = new Map(
-        evaluation.answers
-          .filter((a) => a.isBlindSpot)
-          .map((answer) => {
-            const question =
-              questions.find((q) => q.id === answer.questionId) ||
-              SAFE_QUIZ_QUESTIONS.find((q) => q.id === answer.questionId);
-            const topic = topics.find((t) => t.id === answer.topicId);
-            const citation = answer.citation;
-            const item = {
-              topicId: answer.topicId,
-              topicTitle: topic?.title || "Assessed topic",
-              questionId: answer.questionId,
-              questionText: question?.question_text || "Diagnostic question",
-              studentResponse: responses[answer.questionId] || "",
-              correctAnswer: answer.correctAnswer,
-              confidence: answer.confidence,
-              evidenceQuote: citation?.quote || answer.explanation || "",
-              citation,
-              remedyAction: citation
-                ? `Review ${citation.documentName} p. ${citation.pageStart}-${citation.pageEnd} and re-test this concept.`
-                : "Review the source section and re-test this concept.",
-            };
-            return [answer.topicId, item] as const;
-          })
-      );
-
-      applyAssessmentResults(
-        Object.entries(evaluation.masteryDeltas).map(([topicId, delta]) => ({
-          topicId,
-          masteryScore: delta.current,
-          classification: delta.classification,
-          evidenceLevel: delta.evidenceLevel,
-          totalAttempts: delta.totalAttempts,
-          correctAttempts: delta.correctAttempts,
-          isBlindSpot: blindSpotTopicIds.has(topicId),
-          blindSpot: blindSpotByTopic.get(topicId),
-        }))
-      );
-
-      setPlanMessage(
-        data.planUpdated
-          ? "Pending revision tasks were automatically prioritized based on your updated mastery."
-          : "Workspace plan refreshed with new Bayesian mastery evidence."
-      );
+      applyEvaluationToWorkspace(data as QuizEvaluationResponse, data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -413,7 +420,7 @@ function DiagnosticContent() {
       });
       const data = await res.json();
       if (res.ok) {
-        setResult(data as QuizEvaluationResponse);
+        applyEvaluationToWorkspace(data as QuizEvaluationResponse, data);
       }
     } catch (err: any) {
       setError(err?.message || "Failed to submit exam.");

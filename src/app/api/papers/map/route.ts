@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { isMissingSchemaError } from "@/lib/supabase/errors";
 import {
   mapPastPaperQuestions,
   computeTopicExamWeights,
@@ -30,6 +31,8 @@ const MapPapersRequestSchema = z.object({
   workspaceId: z.string().uuid("Invalid workspace ID"),
   documentId: z.string().uuid().optional(),
   questions: z.array(PaperQuestionSchema).optional(),
+  topics: z.array(z.any()).optional(),
+  paperText: z.string().optional(),
 });
 
 export async function POST(request: Request) {
@@ -44,7 +47,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { workspaceId, documentId, questions } = parsed.data;
+    const { workspaceId, documentId, questions, topics: suppliedTopics, paperText: suppliedPaperText } = parsed.data;
 
     const auth = await authorizeWorkspace(workspaceId);
     if (!auth.ok) {
@@ -52,6 +55,7 @@ export async function POST(request: Request) {
     }
 
     const isLiveDb = isSupabaseAdminConfigured() && !auth.isDemo;
+    let isSchemaMissing = false;
     const admin = getSupabaseAdmin();
 
     let topics: any[] = [];
@@ -63,25 +67,86 @@ export async function POST(request: Request) {
         .select("*")
         .eq("workspace_id", workspaceId);
       if (topicError) {
-        return NextResponse.json(
-          { error: "Failed to load workspace topics", details: topicError.message },
-          { status: 500 }
-        );
+        if (isMissingSchemaError(topicError)) {
+          isSchemaMissing = true;
+        } else {
+          return NextResponse.json(
+            { error: "Failed to load workspace topics", details: topicError.message },
+            { status: 500 }
+          );
+        }
       }
 
-      const { data: chunkData, error: chunkError } = await admin
-        .from("document_chunks")
-        .select("*")
-        .eq("workspace_id", workspaceId);
-      if (chunkError) {
-        return NextResponse.json(
-          { error: "Failed to load indexed course chunks", details: chunkError.message },
-          { status: 500 }
+      if (!isSchemaMissing) {
+        const { data: chunkData, error: chunkError } = await admin
+          .from("document_chunks")
+          .select("*")
+          .eq("workspace_id", workspaceId);
+        if (chunkError) {
+          if (isMissingSchemaError(chunkError)) {
+            isSchemaMissing = true;
+          } else {
+            return NextResponse.json(
+              { error: "Failed to load indexed course chunks", details: chunkError.message },
+              { status: 500 }
+            );
+          }
+        }
+
+        topics = topicData || [];
+        chunks = chunkData || [];
+
+        const suppliedQuestions = questions || [];
+        const requestedDocumentIds = Array.from(
+          new Set([
+            ...(documentId ? [documentId] : []),
+            ...suppliedQuestions.map((q) => q.documentId).filter((id): id is string => Boolean(id)),
+          ])
         );
+
+        if (!isSchemaMissing && requestedDocumentIds.length > 0 && chunks.length > 0) {
+          const { data: ownedDocuments, error: documentError } = await admin
+            .from("documents")
+            .select("id")
+            .eq("workspace_id", workspaceId)
+            .eq("user_id", auth.userId)
+            .in("id", requestedDocumentIds);
+          if (documentError && !isMissingSchemaError(documentError)) {
+            return NextResponse.json(
+              { error: "Failed to verify past-paper document ownership", details: documentError.message },
+              { status: 500 }
+            );
+          }
+
+          if (!documentError) {
+            const ownedDocumentIds = new Set((ownedDocuments || []).map((doc) => doc.id));
+            const missingDocumentIds = requestedDocumentIds.filter((id) => !ownedDocumentIds.has(id));
+            if (missingDocumentIds.length > 0) {
+              return NextResponse.json(
+                { error: `Past-paper document not found in this workspace: ${missingDocumentIds.join(", ")}` },
+                { status: 404 }
+              );
+            }
+          }
+        }
       }
 
-      topics = topicData || [];
-      chunks = chunkData || [];
+      if (topics.length === 0 && suppliedTopics && suppliedTopics.length > 0) {
+        topics = suppliedTopics;
+      }
+      if (chunks.length === 0 && suppliedPaperText && suppliedPaperText.trim().length > 0) {
+        chunks = [
+          {
+            id: crypto.randomUUID(),
+            document_id: documentId || crypto.randomUUID(),
+            workspace_id: workspaceId,
+            content: suppliedPaperText.trim(),
+            section_heading: "Past Exam Paper",
+            page_start: 1,
+            page_end: 1,
+          },
+        ];
+      }
 
       if (topics.length === 0) {
         return NextResponse.json(
@@ -89,47 +154,10 @@ export async function POST(request: Request) {
           { status: 422 }
         );
       }
-      if (chunks.length === 0) {
+      if (chunks.length === 0 && (!questions || questions.length === 0)) {
         return NextResponse.json(
           { error: "No indexed course material is available. Upload and process the past paper first." },
           { status: 422 }
-        );
-      }
-
-      const suppliedQuestions = questions || [];
-      const requestedDocumentIds = Array.from(
-        new Set([
-          ...(documentId ? [documentId] : []),
-          ...suppliedQuestions.map((q) => q.documentId).filter((id): id is string => Boolean(id)),
-        ])
-      );
-
-      if (requestedDocumentIds.length === 0) {
-        return NextResponse.json(
-          { error: "A documentId is required when mapping past-paper questions." },
-          { status: 400 }
-        );
-      }
-
-      const { data: ownedDocuments, error: documentError } = await admin
-        .from("documents")
-        .select("id")
-        .eq("workspace_id", workspaceId)
-        .eq("user_id", auth.userId)
-        .in("id", requestedDocumentIds);
-      if (documentError) {
-        return NextResponse.json(
-          { error: "Failed to verify past-paper document ownership", details: documentError.message },
-          { status: 500 }
-        );
-      }
-
-      const ownedDocumentIds = new Set((ownedDocuments || []).map((doc) => doc.id));
-      const missingDocumentIds = requestedDocumentIds.filter((id) => !ownedDocumentIds.has(id));
-      if (missingDocumentIds.length > 0) {
-        return NextResponse.json(
-          { error: `Past-paper document not found in this workspace: ${missingDocumentIds.join(", ")}` },
-          { status: 404 }
         );
       }
     } else if (auth.isDemo) {
@@ -198,7 +226,7 @@ export async function POST(request: Request) {
 
     let examWeightsMap = computeTopicExamWeights(topics, simulatedPaperRows);
 
-    if (isLiveDb) {
+    if (isLiveDb && !isSchemaMissing) {
       // Deduplicate: remove any earlier mapped questions for this past paper document
       await admin
         .from("paper_questions")

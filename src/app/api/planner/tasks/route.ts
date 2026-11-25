@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { isMissingSchemaError } from "@/lib/supabase/errors";
 
 const PatchTaskSchema = z.object({
   workspaceId: z.string().uuid("Invalid workspace ID"),
@@ -56,6 +57,15 @@ export async function PATCH(request: Request) {
       .maybeSingle();
 
     if (fetchErr) {
+      if (isMissingSchemaError(fetchErr)) {
+        return NextResponse.json({
+          success: true,
+          taskId,
+          status,
+          completedAt: status === "completed" ? (completedAt || new Date().toISOString()) : null,
+          isOffline: true,
+        });
+      }
       return NextResponse.json(
         { error: "Failed to verify task ownership", details: fetchErr.message },
         { status: 500 }

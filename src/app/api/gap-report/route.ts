@@ -9,6 +9,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { isMissingSchemaError } from "@/lib/supabase/errors";
 import { aggregateBlindSpots, type EvaluatedAnswerInput } from "@/lib/algorithms/blind-spots";
 import { reconstructMasteryFromAttempts } from "@/lib/algorithms/mastery";
 import type { TopicMastery, GapReportData, ReadinessMetrics } from "@/types/assessment";
@@ -49,48 +50,51 @@ export async function GET(request: Request) {
     let questions: any[] = auth.isDemo ? DEMO_QUIZ_QUESTIONS : [];
 
     if (isLiveDb) {
-      const { data: wsData } = await admin
+      const { data: wsData, error: wsErr } = await admin
         .from("workspaces")
         .select("*")
         .eq("id", workspaceId)
         .eq("user_id", auth.userId)
         .maybeSingle();
 
-      if (!wsData) {
+      if (wsErr && isMissingSchemaError(wsErr)) {
+        // Schema not yet initialized; continue with offline/empty workspace state
+      } else if (!wsData) {
         return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
-      }
-      workspace = wsData;
-
-      const { data: tData } = await admin
-        .from("topics")
-        .select("*")
-        .eq("workspace_id", workspaceId)
-        .order("order_index", { ascending: true });
-
-      topics = tData || [];
-
-      const topicIds = topics.map((t) => t.id);
-      if (topicIds.length > 0) {
-        const { data: aData } = await admin
-          .from("answers")
-          .select("*")
-          .eq("user_id", auth.userId)
-          .in("topic_id", topicIds)
-          .order("answered_at", { ascending: true });
-        answers = aData || [];
       } else {
-        answers = [];
-      }
+        workspace = wsData;
 
-      const questionIds = answers.map((a) => a.quiz_question_id).filter(Boolean);
-      if (questionIds.length > 0) {
-        const { data: qData } = await admin
-          .from("quiz_questions")
+        const { data: tData } = await admin
+          .from("topics")
           .select("*")
-          .in("id", questionIds);
-        questions = qData || [];
-      } else {
-        questions = [];
+          .eq("workspace_id", workspaceId)
+          .order("order_index", { ascending: true });
+
+        topics = tData || [];
+
+        const topicIds = topics.map((t) => t.id);
+        if (topicIds.length > 0) {
+          const { data: aData } = await admin
+            .from("answers")
+            .select("*")
+            .eq("user_id", auth.userId)
+            .in("topic_id", topicIds)
+            .order("answered_at", { ascending: true });
+          answers = aData || [];
+        } else {
+          answers = [];
+        }
+
+        const questionIds = answers.map((a) => a.quiz_question_id).filter(Boolean);
+        if (questionIds.length > 0) {
+          const { data: qData } = await admin
+            .from("quiz_questions")
+            .select("*")
+            .in("id", questionIds);
+          questions = qData || [];
+        } else {
+          questions = [];
+        }
       }
     }
 

@@ -80,9 +80,7 @@ export default function MaterialsPage() {
 
   // Sync with context initialDocs
   useEffect(() => {
-    if (initialDocs && initialDocs.length > 0) {
-      setDocuments(initialDocs);
-    }
+    setDocuments(initialDocs || []);
   }, [initialDocs]);
 
   // Upload simulation and real processing state
@@ -342,6 +340,8 @@ export default function MaterialsPage() {
         body: JSON.stringify({
           workspaceId: workspace?.id || "10000000-0000-0000-0000-000000000001",
           documentId: paperDoc.id,
+          topics,
+          paperText: (paperDoc as any)?.extracted_text || undefined,
         }),
       });
       const data = await res.json();
@@ -537,6 +537,7 @@ export default function MaterialsPage() {
               page_count: data.pageCount || d.page_count,
               error_message: null,
               updated_at: new Date().toISOString(),
+              ...({ extracted_text: ocrInputText.trim() } as any),
             }
           : d
       );

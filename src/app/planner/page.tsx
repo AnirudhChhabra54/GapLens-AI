@@ -49,6 +49,7 @@ export default function PlannerPage() {
   const {
     workspace,
     topics,
+    prerequisites,
     gapReport,
     revisionSchedule,
     dailyMinutes,
@@ -98,6 +99,13 @@ export default function PlannerPage() {
       return;
     }
     try {
+      // Persist updated study budget to workspace settings in background
+      fetch(`/api/workspaces/${workspace.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dailyStudyMinutes: value }),
+      }).catch(() => undefined);
+
       const res = await fetch("/api/planner/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -106,11 +114,14 @@ export default function PlannerPage() {
           dailyMinutes: value,
           daysRemaining: plan.totalDays || 7,
           examDate: plan.examDate || workspace.exam_date || null,
+          topics,
+          prerequisites,
         }),
       });
       const data = await res.json();
-      if (res.ok && data.plan) {
-        setRevisionSchedule(data.plan);
+      const serverPlan = data?.plan || (Array.isArray(data?.days) ? data : null);
+      if (res.ok && serverPlan) {
+        setRevisionSchedule(serverPlan);
       } else {
         regenerateSchedule(value);
       }

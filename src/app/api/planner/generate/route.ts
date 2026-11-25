@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { isMissingSchemaError } from "@/lib/supabase/errors";
 import { rankTopicsByPriority, type RawTopicFactorsInput } from "@/lib/algorithms/priority";
 import { generateRevisionPlan } from "@/lib/algorithms/scheduler";
 import type { ScheduledTask, RevisionPlanOverview } from "@/types/planner";
@@ -19,6 +20,8 @@ const GeneratePlanRequestSchema = z.object({
   dailyMinutes: z.number().int().min(10).max(1440).default(60),
   daysRemaining: z.number().int().min(1).max(365).default(7),
   examDate: z.string().nullable().optional(),
+  topics: z.array(z.any()).optional(),
+  prerequisites: z.array(z.any()).optional(),
 });
 
 export async function POST(request: Request) {
@@ -33,7 +36,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { workspaceId, dailyMinutes, daysRemaining, examDate } = parsed.data;
+    const { workspaceId, dailyMinutes, daysRemaining, examDate, topics: suppliedTopics, prerequisites: suppliedPrereqs } = parsed.data;
 
     const auth = await authorizeWorkspace(workspaceId);
     if (!auth.ok) {
@@ -41,6 +44,7 @@ export async function POST(request: Request) {
     }
 
     const isLiveDb = isSupabaseAdminConfigured() && !auth.isDemo;
+    let isSchemaMissing = false;
     const admin = getSupabaseAdmin();
 
     let topics: any[] = [];
@@ -49,85 +53,105 @@ export async function POST(request: Request) {
     let existingPlanVersion = 0;
     let existingPlanId: string | null = null;
 
-    if (isLiveDb) {
+    if (isLiveDb && !isSchemaMissing) {
       const { data: topicData, error: topicError } = await admin
         .from("topics")
         .select("*")
         .eq("workspace_id", workspaceId);
       if (topicError) {
-        return NextResponse.json(
-          { error: "Failed to load workspace topics", details: topicError.message },
-          { status: 500 }
-        );
+        if (isMissingSchemaError(topicError)) {
+          isSchemaMissing = true;
+        } else {
+          return NextResponse.json(
+            { error: "Failed to load workspace topics", details: topicError.message },
+            { status: 500 }
+          );
+        }
       }
 
-      const { data: prereqData, error: prereqError } = await admin
-        .from("topic_prerequisites")
-        .select("*")
-        .eq("workspace_id", workspaceId);
-      if (prereqError) {
-        return NextResponse.json(
-          { error: "Failed to load topic prerequisites", details: prereqError.message },
-          { status: 500 }
-        );
+      if (!isSchemaMissing) {
+        const { data: prereqData, error: prereqError } = await admin
+          .from("topic_prerequisites")
+          .select("*")
+          .eq("workspace_id", workspaceId);
+        if (prereqError) {
+          if (isMissingSchemaError(prereqError)) {
+            isSchemaMissing = true;
+          } else {
+            return NextResponse.json(
+              { error: "Failed to load topic prerequisites", details: prereqError.message },
+              { status: 500 }
+            );
+          }
+        }
+
+        const { data: planData, error: planError } = await admin
+          .from("revision_plans")
+          .select("id, version")
+          .eq("workspace_id", workspaceId)
+          .eq("is_active", true)
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (planError) {
+          if (isMissingSchemaError(planError)) {
+            isSchemaMissing = true;
+          } else {
+            return NextResponse.json(
+              { error: "Failed to load active revision plan", details: planError.message },
+              { status: 500 }
+            );
+          }
+        }
+
+        existingPlanId = planData?.id || null;
+        existingPlanVersion = planData?.version || 0;
+
+        const { data: taskData, error: taskError } = planData
+          ? await admin.from("revision_tasks").select("*").eq("plan_id", planData.id)
+          : { data: null, error: null };
+        if (taskError && !isMissingSchemaError(taskError)) {
+          return NextResponse.json(
+            { error: "Failed to load revision tasks", details: taskError.message },
+            { status: 500 }
+          );
+        }
+
+        topics = topicData || [];
+        prerequisites = prereqData || [];
+        if (taskData) {
+          existingTasks = taskData.map((t) => ({
+            id: t.id,
+            planId: t.plan_id,
+            topicId: t.topic_id,
+            topicTitle: (t.title || "").includes(": ")
+              ? (t.title || "").slice((t.title || "").indexOf(": ") + 2).trim()
+              : t.title,
+            dayNumber: t.day_number,
+            taskOrder: t.task_order,
+            taskType: t.task_type,
+            title: t.title,
+            description: t.description || "",
+            allocatedMinutes: t.allocated_minutes,
+            priorityScore: t.priority_score,
+            status: t.status,
+            sourceChunkId: t.source_chunk_id,
+            citationReference: t.citation_reference,
+            completedAt: t.completed_at,
+          }));
+        }
       }
 
-      const { data: planData, error: planError } = await admin
-        .from("revision_plans")
-        .select("id, version")
-        .eq("workspace_id", workspaceId)
-        .eq("is_active", true)
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (planError) {
-        return NextResponse.json(
-          { error: "Failed to load active revision plan", details: planError.message },
-          { status: 500 }
-        );
+      if (topics.length === 0 && suppliedTopics && suppliedTopics.length > 0) {
+        topics = suppliedTopics;
+        prerequisites = suppliedPrereqs || [];
       }
 
-      existingPlanId = planData?.id || null;
-      existingPlanVersion = planData?.version || 0;
-
-      const { data: taskData, error: taskError } = planData
-        ? await admin.from("revision_tasks").select("*").eq("plan_id", planData.id)
-        : { data: null, error: null };
-      if (taskError) {
-        return NextResponse.json(
-          { error: "Failed to load revision tasks", details: taskError.message },
-          { status: 500 }
-        );
-      }
-
-      topics = topicData || [];
-      prerequisites = prereqData || [];
       if (topics.length === 0) {
         return NextResponse.json(
           { error: "No indexed topics are available for this workspace. Extract the syllabus first." },
           { status: 422 }
         );
-      }
-      if (taskData) {
-        existingTasks = taskData.map((t) => ({
-          id: t.id,
-          planId: t.plan_id,
-          topicId: t.topic_id,
-          topicTitle: (t.title || "").includes(": ")
-            ? (t.title || "").slice((t.title || "").indexOf(": ") + 2).trim()
-            : t.title,
-          dayNumber: t.day_number,
-          taskOrder: t.task_order,
-          taskType: t.task_type,
-          title: t.title,
-          description: t.description || "",
-          allocatedMinutes: t.allocated_minutes,
-          priorityScore: t.priority_score,
-          status: t.status,
-          sourceChunkId: t.source_chunk_id,
-          citationReference: t.citation_reference,
-          completedAt: t.completed_at,
-        }));
       }
     } else if (auth.isDemo) {
       topics = DEMO_TOPICS;
@@ -211,7 +235,7 @@ export async function POST(request: Request) {
       topicMetadataMap: metaMap,
     });
 
-    if (isLiveDb) {
+    if (isLiveDb && !isSchemaMissing) {
       // Deactivate any existing active plans in the workspace
       await admin
         .from("revision_plans")

@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace, verifyQuizQuestionOwnership } from "@/lib/supabase/auth";
+import { isMissingSchemaError } from "@/lib/supabase/errors";
 import { evaluateSubmission } from "@/lib/algorithms/evaluator";
 import { rankTopicsByPriority, type RawTopicFactorsInput } from "@/lib/algorithms/priority";
 import { updatePlanAfterRetest } from "@/lib/algorithms/scheduler";
@@ -58,6 +59,7 @@ export async function POST(request: Request) {
     }
 
     const isLiveDb = isSupabaseAdminConfigured() && !auth.isDemo;
+    let isSchemaMissing = false;
     const admin = getSupabaseAdmin();
     const userId = auth.userId;
     const submittedIds = answers.map((a) => a.questionId);
@@ -101,100 +103,120 @@ export async function POST(request: Request) {
         .eq("quiz_id", quizId);
 
       if (allQuestionsError) {
-        return NextResponse.json(
-          { error: "Failed to load quiz questions.", details: allQuestionsError.message },
-          { status: 500 }
-        );
-      }
-
-      const allQuestionIds = (allQuizQuestions || []).map((q) => q.id);
-      const submittedQuestionIds = new Set(submittedIds);
-      const missingQuestionIds = allQuestionIds.filter((id) => !submittedQuestionIds.has(id));
-
-      if (missingQuestionIds.length > 0) {
-        return NextResponse.json(
-          {
-            error: "Submit every question in the quiz before finalizing the assessment.",
-            missingQuestionIds,
-          },
-          { status: 400 }
-        );
-      }
-
-      const { data: qData, error: qError } = await admin
-        .from("quiz_questions")
-        .select("*")
-        .eq("quiz_id", quizId)
-        .in("id", submittedIds);
-
-      if (qError) {
-        return NextResponse.json({ error: "Failed to load quiz questions." }, { status: 500 });
-      }
-      questions = (qData || []) as QuizQuestionRow[];
-
-      if (questions.length !== submittedIds.length) {
-        return NextResponse.json(
-          { error: "One or more submitted questions could not be verified for this quiz." },
-          { status: 400 }
-        );
-      }
-
-      const { data: topicData } = await admin
-        .from("topics")
-        .select("*")
-        .eq("workspace_id", workspaceId);
-
-      topics = (topicData || []) as TopicRow[];
-      for (const t of topics) {
-        currentMasteryMap.set(t.id, t.current_mastery ?? 45.0);
-      }
-
-      const { data: prereqData } = await admin
-        .from("topic_prerequisites")
-        .select("*")
-        .eq("workspace_id", workspaceId);
-      prerequisites = (prereqData || []) as TopicPrerequisiteRow[];
-
-      const topicIds = topics.map((t) => t.id);
-      if (topicIds.length > 0) {
-        const { data: prevAnswers } = await admin
-          .from("answers")
-          .select("quiz_id, quiz_question_id, topic_id, score, answered_at")
-          .eq("user_id", userId)
-          .in("topic_id", topicIds)
-          .order("answered_at", { ascending: true });
-
-        if (prevAnswers) {
-          const previousQuestionIds = Array.from(
-            new Set(
-              prevAnswers
-                .map((pa) => pa.quiz_question_id)
-                .filter((id): id is string => Boolean(id))
-            )
+        if (isMissingSchemaError(allQuestionsError)) {
+          isSchemaMissing = true;
+        } else {
+          return NextResponse.json(
+            { error: "Failed to load quiz questions.", details: allQuestionsError.message },
+            { status: 500 }
           );
-          const difficultyMap = new Map<string, number>();
+        }
+      }
 
-          if (previousQuestionIds.length > 0) {
-            const { data: previousQuestions } = await admin
-              .from("quiz_questions")
-              .select("id, difficulty")
-              .in("id", previousQuestionIds);
-
-            for (const question of previousQuestions || []) {
-              difficultyMap.set(question.id, question.difficulty);
-            }
+      if (isSchemaMissing) {
+        const cached = getDemoQuizQuestions(quizId);
+        if (cached && cached.length > 0) {
+          questions = cached.filter((q) => submittedIds.includes(q.id));
+        }
+        if (questions.length !== submittedIds.length) {
+          return NextResponse.json(
+            { error: `Invalid or expired quiz session (${quizId}). Please generate a fresh diagnostic quiz.` },
+            { status: 400 }
+          );
+        }
+        for (const a of answers) {
+          if (a.topicId && !currentMasteryMap.has(a.topicId)) {
+            currentMasteryMap.set(a.topicId, 45.0);
           }
+        }
+      } else {
+        const allQuestionIds = (allQuizQuestions || []).map((q) => q.id);
+        const submittedQuestionIds = new Set(submittedIds);
+        const missingQuestionIds = allQuestionIds.filter((id) => !submittedQuestionIds.has(id));
 
-          for (const pa of prevAnswers) {
-            // Exclude this quiz's own saved rows. A retry after a partial write
-            // must rebuild from prior history, not double-count the retry.
-            if (pa.quiz_id === quizId) continue;
-            const list = historicalAttemptsMap.get(pa.topic_id) || [];
-            list.push({
-              score: pa.score ?? 0,
-              difficulty: difficultyMap.get(pa.quiz_question_id) ?? 2,
-            });
-            historicalAttemptsMap.set(pa.topic_id, list);
+        if (missingQuestionIds.length > 0) {
+          return NextResponse.json(
+            {
+              error: "Submit every question in the quiz before finalizing the assessment.",
+              missingQuestionIds,
+            },
+            { status: 400 }
+          );
+        }
+
+        const { data: qData, error: qError } = await admin
+          .from("quiz_questions")
+          .select("*")
+          .eq("quiz_id", quizId)
+          .in("id", submittedIds);
+
+        if (qError) {
+          return NextResponse.json({ error: "Failed to load quiz questions." }, { status: 500 });
+        }
+        questions = (qData || []) as QuizQuestionRow[];
+
+        if (questions.length !== submittedIds.length) {
+          return NextResponse.json(
+            { error: "One or more submitted questions could not be verified for this quiz." },
+            { status: 400 }
+          );
+        }
+
+        const { data: topicData } = await admin
+          .from("topics")
+          .select("*")
+          .eq("workspace_id", workspaceId);
+
+        topics = (topicData || []) as TopicRow[];
+        for (const t of topics) {
+          currentMasteryMap.set(t.id, t.current_mastery ?? 45.0);
+        }
+
+        const { data: prereqData } = await admin
+          .from("topic_prerequisites")
+          .select("*")
+          .eq("workspace_id", workspaceId);
+        prerequisites = (prereqData || []) as TopicPrerequisiteRow[];
+
+        const topicIds = topics.map((t) => t.id);
+        if (topicIds.length > 0) {
+          const { data: prevAnswers } = await admin
+            .from("answers")
+            .select("quiz_id, quiz_question_id, topic_id, score, answered_at")
+            .eq("user_id", userId)
+            .in("topic_id", topicIds)
+            .order("answered_at", { ascending: true });
+
+          if (prevAnswers) {
+            const previousQuestionIds = Array.from(
+              new Set(
+                prevAnswers
+                  .map((pa) => pa.quiz_question_id)
+                  .filter((id): id is string => Boolean(id))
+              )
+            );
+            const difficultyMap = new Map<string, number>();
+
+            if (previousQuestionIds.length > 0) {
+              const { data: previousQuestions } = await admin
+                .from("quiz_questions")
+                .select("id, difficulty")
+                .in("id", previousQuestionIds);
+
+              for (const question of previousQuestions || []) {
+                difficultyMap.set(question.id, question.difficulty);
+              }
+            }
+
+            for (const pa of prevAnswers) {
+              if (pa.quiz_id === quizId) continue;
+              const list = historicalAttemptsMap.get(pa.topic_id) || [];
+              list.push({
+                score: pa.score ?? 0,
+                difficulty: difficultyMap.get(pa.quiz_question_id) ?? 2,
+              });
+              historicalAttemptsMap.set(pa.topic_id, list);
+            }
           }
         }
       }
@@ -265,7 +287,7 @@ export async function POST(request: Request) {
     let planUpdated = false;
     let planWarning: string | null = null;
 
-    if (isLiveDb) {
+    if (isLiveDb && !isSchemaMissing) {
       // Persist each answer with the student's real response. The unique
       // (quiz_id, quiz_question_id) constraint makes a retry idempotent.
       const responseByQuestion = new Map(answers.map((a) => [a.questionId, a.response]));

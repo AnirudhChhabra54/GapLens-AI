@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { isMissingSchemaError } from "@/lib/supabase/errors";
 import { DEMO_WORKSPACE } from "@/lib/demo/os-cs301-fixture";
 
 const PatchWorkspaceSchema = z.object({
@@ -77,6 +78,20 @@ export async function PATCH(
       .single();
 
     if (updateErr) {
+      if (isMissingSchemaError(updateErr)) {
+        return NextResponse.json({
+          success: true,
+          isOffline: true,
+          workspace: {
+            id: workspaceId,
+            title: title ?? "My Course Workspace",
+            description: description ?? null,
+            exam_date: examDate ?? null,
+            daily_study_minutes: dailyStudyMinutes ?? 60,
+            updated_at: new Date().toISOString(),
+          },
+        });
+      }
       return NextResponse.json(
         { error: "Failed to update workspace", details: updateErr.message },
         { status: 500 }

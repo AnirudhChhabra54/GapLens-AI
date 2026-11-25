@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { isMissingSchemaError } from "@/lib/supabase/errors";
 
 export async function DELETE(
   request: Request,
@@ -49,6 +50,14 @@ export async function DELETE(
       .maybeSingle();
 
     if (fetchErr) {
+      if (isMissingSchemaError(fetchErr)) {
+        return NextResponse.json({
+          success: true,
+          documentId,
+          isOffline: true,
+          message: "Document removed from local workspace view (database schema not yet initialized).",
+        });
+      }
       return NextResponse.json(
         { error: "Failed to verify document existence", details: fetchErr.message },
         { status: 500 }

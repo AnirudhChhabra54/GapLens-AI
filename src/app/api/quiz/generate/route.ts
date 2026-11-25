@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSupabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { authorizeWorkspace } from "@/lib/supabase/auth";
+import { isMissingSchemaError } from "@/lib/supabase/errors";
 import {
   generateDiagnosticQuestions,
   toSafeQuizQuestion,
@@ -24,6 +25,8 @@ const GenerateQuizRequestSchema = z.object({
   targetCount: z.number().int().min(1).max(20).default(6),
   difficulty: z.number().int().min(1).max(3).default(2),
   quizMode: z.enum(["diagnostic", "drill", "retest", "exam"]).default("diagnostic"),
+  topics: z.array(z.any()).optional(),
+  documents: z.array(z.any()).optional(),
 });
 
 export async function POST(request: Request) {
@@ -38,7 +41,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { workspaceId, topicIds, targetCount, difficulty, quizMode } = parsed.data;
+    const { workspaceId, topicIds, targetCount, difficulty, quizMode, topics: suppliedTopics, documents: suppliedDocuments } = parsed.data;
 
     const auth = await authorizeWorkspace(workspaceId);
     if (!auth.ok) {
@@ -46,6 +49,7 @@ export async function POST(request: Request) {
     }
 
     const isLiveDb = isSupabaseAdminConfigured() && !auth.isDemo;
+    let isSchemaMissing = false;
     const admin = getSupabaseAdmin();
 
     let topics: any[] = [];
@@ -58,25 +62,80 @@ export async function POST(request: Request) {
       }
       const { data: topicData, error: topicError } = await topicQuery;
       if (topicError) {
-        return NextResponse.json(
-          { error: "Failed to load workspace topics", details: topicError.message },
-          { status: 500 }
-        );
+        if (isMissingSchemaError(topicError)) {
+          isSchemaMissing = true;
+        } else {
+          return NextResponse.json(
+            { error: "Failed to load workspace topics", details: topicError.message },
+            { status: 500 }
+          );
+        }
       }
 
-      const { data: chunkData, error: chunkError } = await admin
-        .from("document_chunks")
-        .select("*")
-        .eq("workspace_id", workspaceId);
-      if (chunkError) {
-        return NextResponse.json(
-          { error: "Failed to load indexed course chunks", details: chunkError.message },
-          { status: 500 }
-        );
+      if (!isSchemaMissing) {
+        const { data: chunkData, error: chunkError } = await admin
+          .from("document_chunks")
+          .select("*")
+          .eq("workspace_id", workspaceId);
+        if (chunkError) {
+          if (isMissingSchemaError(chunkError)) {
+            isSchemaMissing = true;
+          } else {
+            return NextResponse.json(
+              { error: "Failed to load indexed course chunks", details: chunkError.message },
+              { status: 500 }
+            );
+          }
+        }
+        topics = topicData || [];
+        chunks = chunkData || [];
       }
 
-      topics = topicData || [];
-      chunks = chunkData || [];
+      if (topics.length === 0 && suppliedTopics && suppliedTopics.length > 0) {
+        topics = topicIds && topicIds.length > 0
+          ? suppliedTopics.filter((t: any) => topicIds.includes(t.id))
+          : suppliedTopics;
+      }
+
+      if (chunks.length === 0) {
+        const fallbackChunks: any[] = [];
+        for (const doc of suppliedDocuments || []) {
+          const text = doc.extracted_text || doc.extractedText;
+          if (text && typeof text === "string" && text.trim().length > 0) {
+            const paragraphs = text.split(/\n\n+/).filter((p: string) => p.trim().length > 30);
+            paragraphs.slice(0, 15).forEach((p: string, idx: number) => {
+              fallbackChunks.push({
+                id: `${doc.id || "doc"}-${idx}`,
+                document_id: doc.id || "doc",
+                workspace_id: workspaceId,
+                document_name: doc.filename || "Uploaded Course Material",
+                page_start: 1,
+                page_end: 1,
+                section_heading: doc.filename || "Course Notes",
+                content: p.trim(),
+              });
+            });
+          }
+        }
+        if (fallbackChunks.length === 0 && topics.length > 0) {
+          for (const t of topics) {
+            const objectives = Array.isArray(t.learning_objectives) && t.learning_objectives.length > 0
+              ? t.learning_objectives.join(". ")
+              : `Core principles, definitions, and applications of ${t.title}.`;
+            fallbackChunks.push({
+              id: `syllabus-${t.id}`,
+              document_id: "syllabus",
+              workspace_id: workspaceId,
+              document_name: "Course Syllabus",
+              page_start: 1,
+              page_end: 1,
+              section_heading: t.unit_module ? `${t.unit_module} — ${t.title}` : t.title,
+              content: `Unit: ${t.unit_module || "Curriculum"}\nTopic: ${t.title}\nScope & Learning Objectives: ${objectives}`,
+            });
+          }
+        }
+        chunks = fallbackChunks;
+      }
 
       if (topics.length === 0) {
         return NextResponse.json(
@@ -168,8 +227,8 @@ export async function POST(request: Request) {
       }
     }
 
-    // Persist quiz and questions if live DB
-    if (isLiveDb) {
+    // Persist quiz and questions if live DB and schema initialized
+    if (isLiveDb && !isSchemaMissing) {
       const { error: quizInsertError } = await admin.from("quizzes").insert({
         id: quizId,
         workspace_id: workspaceId,
@@ -182,45 +241,53 @@ export async function POST(request: Request) {
       });
 
       if (quizInsertError) {
-        return NextResponse.json(
-          { error: "Failed to save generated quiz", details: quizInsertError.message },
-          { status: 500 }
-        );
-      }
-
-      for (const q of generated) {
-        const qId = crypto.randomUUID();
-        q.id = qId;
-
-        const { error: questionInsertError } = await admin.from("quiz_questions").insert({
-          id: qId,
-          quiz_id: quizId,
-          topic_id: q.topicId,
-          question_type: q.questionType,
-          difficulty: q.difficulty,
-          question_text: q.questionText,
-          options: q.options,
-          answer_key: q.answerKey,
-          explanation: q.explanation,
-          rubric: q.rubric,
-          source_chunk_id: q.sourceChunkId,
-          citation_document_name: q.citationDocumentName,
-          citation_page_start: q.citationPageStart,
-          citation_page_end: q.citationPageEnd,
-          citation_section: q.citationSection,
-          citation_quote: q.citationQuote,
-          is_quote_verified: q.isQuoteVerified,
-        });
-
-        if (questionInsertError) {
-          await admin.from("quizzes").delete().eq("id", quizId);
+        if (isMissingSchemaError(quizInsertError)) {
+          isSchemaMissing = true;
+        } else {
           return NextResponse.json(
-            { error: "Failed to save generated questions", details: questionInsertError.message },
+            { error: "Failed to save generated quiz", details: quizInsertError.message },
             { status: 500 }
           );
         }
       }
-    } else {
+
+      if (!isSchemaMissing) {
+        for (const q of generated) {
+          const qId = crypto.randomUUID();
+          q.id = qId;
+
+          const { error: questionInsertError } = await admin.from("quiz_questions").insert({
+            id: qId,
+            quiz_id: quizId,
+            topic_id: q.topicId,
+            question_type: q.questionType,
+            difficulty: q.difficulty,
+            question_text: q.questionText,
+            options: q.options,
+            answer_key: q.answerKey,
+            explanation: q.explanation,
+            rubric: q.rubric,
+            source_chunk_id: q.sourceChunkId,
+            citation_document_name: q.citationDocumentName,
+            citation_page_start: q.citationPageStart,
+            citation_page_end: q.citationPageEnd,
+            citation_section: q.citationSection,
+            citation_quote: q.citationQuote,
+            is_quote_verified: q.isQuoteVerified,
+          });
+
+          if (questionInsertError) {
+            await admin.from("quizzes").delete().eq("id", quizId);
+            return NextResponse.json(
+              { error: "Failed to save generated questions", details: questionInsertError.message },
+              { status: 500 }
+            );
+          }
+        }
+      }
+    }
+
+    if (!isLiveDb || isSchemaMissing) {
       // Assign valid UUIDs in mock mode and cache questions server-side
       generated.forEach((q) => {
         q.id = q.id || crypto.randomUUID();
