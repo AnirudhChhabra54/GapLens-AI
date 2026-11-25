@@ -171,6 +171,15 @@ function DiagnosticContent() {
   const [feynmanLoading, setFeynmanLoading] = useState(false);
   const [feynmanResult, setFeynmanResult] = useState<any | null>(null);
 
+  // Oral Viva Interrogation state
+  const [vivaOpen, setVivaOpen] = useState(false);
+  const [vivaTopicTitle, setVivaTopicTitle] = useState<string>("");
+  const [vivaTurns, setVivaTurns] = useState<Array<{ role: "examiner" | "student"; text: string }>>([]);
+  const [vivaReply, setVivaReply] = useState("");
+  const [vivaLoading, setVivaLoading] = useState(false);
+  const [vivaDepthScore, setVivaDepthScore] = useState<number | null>(null);
+  const [vivaComplete, setVivaComplete] = useState(false);
+
   useEffect(() => {
     if (urlMode && ["diagnostic", "drill", "retest", "exam"].includes(urlMode)) {
       setMode(urlMode);
@@ -576,10 +585,145 @@ function DiagnosticContent() {
                 <BookOpen className="h-3.5 w-3.5 text-accent" />
                 <span>{feynmanOpen ? "Hide Feynman Teach-Back Audit" : "Feynman Teach-Back Audit"}</span>
               </Button>
+
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={async () => {
+                  const nextOpen = !vivaOpen;
+                  setVivaOpen(nextOpen);
+                  if (nextOpen && vivaTurns.length === 0) {
+                    const target = vivaTopicTitle || topics[0]?.title || "Course Topic";
+                    if (!vivaTopicTitle) setVivaTopicTitle(target);
+                    setVivaLoading(true);
+                    try {
+                      const res = await fetch("/api/viva/probe", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          workspaceId: workspace?.id || DEMO_WORKSPACE_ID,
+                          topicTitle: target,
+                          history: [],
+                        }),
+                      });
+                      const data = await res.json();
+                      if (res.ok && data.examinerPrompt) {
+                        setVivaTurns([{ role: "examiner", text: data.examinerPrompt }]);
+                        setVivaDepthScore(data.depthScore ?? null);
+                        setVivaComplete(Boolean(data.isComplete));
+                      }
+                    } finally {
+                      setVivaLoading(false);
+                    }
+                  }
+                }}
+              >
+                <Sparkles className="h-3.5 w-3.5 text-accent" />
+                <span>{vivaOpen ? "Hide Oral Viva" : "Oral Viva Mode"}</span>
+              </Button>
             </div>
           </div>
         )}
       </div>
+
+      {/* Oral Viva Follow-Up Interrogation Panel */}
+      {vivaOpen && topics.length > 0 && (
+        <Card className="space-y-4 border-accent/30">
+          <div className="flex items-center justify-between border-b border-brandBorder pb-3">
+            <div>
+              <h3 className="text-sm font-semibold text-brandText-primary flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-accent" />
+                <span>Sub-Second Oral Viva Interrogation</span>
+                {vivaDepthScore !== null && (
+                  <span className="rounded bg-accent-soft px-2 py-0.5 text-[10px] font-mono text-accent">
+                    Depth: {Math.round(vivaDepthScore)}/100
+                  </span>
+                )}
+              </h3>
+              <p className="text-xs text-brandText-secondary mt-0.5">
+                Multi-turn viva probe powered by Groq LPU. Weak or vague answers trigger immediate mechanism follow-ups.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setVivaOpen(false)}
+              className="p-1 text-brandText-muted hover:text-brandText-primary"
+              aria-label="Close Oral Viva panel"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="space-y-2.5 max-h-60 overflow-y-auto text-xs">
+            {vivaTurns.map((turn, idx) => (
+              <div
+                key={idx}
+                className={cn(
+                  "rounded-control p-3 border",
+                  turn.role === "examiner"
+                    ? "bg-surface-subtle border-brandBorder text-brandText-primary"
+                    : "bg-accent-soft/30 border-accent/30 text-brandText-primary ml-6"
+                )}
+              >
+                <span className="font-mono text-[10px] uppercase font-semibold text-accent block mb-0.5">
+                  {turn.role === "examiner" ? "Examiner" : "Your Answer"}
+                </span>
+                <p className="leading-relaxed">{turn.text}</p>
+              </div>
+            ))}
+            {vivaLoading && (
+              <p className="text-xs font-mono text-brandText-muted italic">Examiner formulating probe...</p>
+            )}
+          </div>
+
+          {!vivaComplete && (
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={vivaReply}
+                onChange={(e) => setVivaReply(e.target.value)}
+                placeholder="Type your viva defense here..."
+                className="flex-1 rounded-control border border-brandBorder bg-surface px-3 py-2 text-xs text-brandText-primary focus:border-accent focus:outline-none"
+              />
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={vivaLoading || !vivaReply.trim()}
+                onClick={async () => {
+                  const reply = vivaReply.trim();
+                  if (!reply) return;
+                  const nextHistory = [...vivaTurns, { role: "student" as const, text: reply }];
+                  setVivaTurns(nextHistory);
+                  setVivaReply("");
+                  setVivaLoading(true);
+                  try {
+                    const res = await fetch("/api/viva/probe", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        workspaceId: workspace?.id || DEMO_WORKSPACE_ID,
+                        topicTitle: vivaTopicTitle || topics[0]?.title || "Course Topic",
+                        history: vivaTurns,
+                        studentReply: reply,
+                      }),
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.examinerPrompt) {
+                      setVivaTurns([...nextHistory, { role: "examiner", text: data.examinerPrompt }]);
+                      setVivaDepthScore(data.depthScore ?? null);
+                      setVivaComplete(Boolean(data.isComplete));
+                    }
+                  } finally {
+                    setVivaLoading(false);
+                  }
+                }}
+              >
+                <span>Submit Defense</span>
+              </Button>
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* Feynman Teach-Back Evidence-Diff Grader Panel */}
       {feynmanOpen && topics.length > 0 && (

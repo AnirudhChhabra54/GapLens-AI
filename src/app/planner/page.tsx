@@ -27,6 +27,7 @@ import {
 import { useWorkspace } from "@/components/workspace-context";
 import { CopilotDrawer } from "@/components/copilot-drawer";
 import { Card, PageHeader, StatusBadge, Button } from "@/components/ui/design-system";
+import { computeExamRoiRankings } from "@/lib/algorithms/exam-roi";
 import { cn } from "@/lib/utils";
 
 const TASK_TYPE_LABELS: Record<string, string> = {
@@ -363,6 +364,48 @@ export default function PlannerPage() {
           </div>
         </Card>
       </div>
+
+      {/* High-Yield Exam ROI Leaderboard */}
+      {topics.length > 0 && (() => {
+        const topRoi = computeExamRoiRankings(topics).slice(0, 4);
+        if (topRoi.length === 0) return null;
+        return (
+          <Card className="space-y-3">
+            <div className="flex items-center justify-between pb-2.5 border-b border-brandBorder">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-accent" />
+                <h3 className="text-sm font-semibold text-brandText-primary">
+                  Highest Exam ROI Targets (ΔMarks / Study Hour)
+                </h3>
+              </div>
+              <span className="text-[11px] font-mono text-brandText-muted">
+                Ranked by exam weight × mastery deficit
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {topRoi.map((item, idx) => (
+                <div
+                  key={item.topicId}
+                  className="rounded-control border border-brandBorder bg-surface-subtle p-3 space-y-1.5 text-xs"
+                >
+                  <div className="flex items-center justify-between font-mono text-[10px]">
+                    <span className="text-brandText-muted">#{idx + 1} ROI</span>
+                    <span className="px-1.5 py-0.5 rounded bg-accent-soft text-accent font-semibold">
+                      +{item.expectedMarksGainPerHour} marks/hr
+                    </span>
+                  </div>
+                  <p className="font-semibold text-brandText-primary truncate" title={item.topicTitle}>
+                    {item.topicTitle}
+                  </p>
+                  <div className="text-[11px] font-mono text-brandText-muted">
+                    {Math.round(item.currentMastery)}% mastery • ~{item.estimatedMinutes}m drill
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        );
+      })()}
 
       {/* =========================================================================
           DAY-BY-DAY SCHEDULE TIMELINE

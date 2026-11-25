@@ -29,6 +29,7 @@ import { BlindSpotCard } from "@/components/blind-spot-card";
 import { CitationBadge } from "@/components/citation-badge";
 import { computeConfidenceMetrics, type EvaluatedAnswerInput } from "@/lib/algorithms/blind-spots";
 import { simulateForgettingCurve } from "@/lib/algorithms/forgetting-curve";
+import { detectConfusionPairs } from "@/lib/algorithms/confusion-pairs";
 import { DEMO_ANSWERS } from "@/lib/demo/os-cs301-fixture";
 import type { MasteryClassification } from "@/types/database";
 import type { GapReportData } from "@/types/assessment";
@@ -455,6 +456,47 @@ export default function GapReportPage() {
                 </div>
               </div>
             )}
+          </Card>
+        );
+      })()}
+
+      {/* Semantic Confusion Pair Drills */}
+      {gapReport.topics.length >= 2 && (() => {
+        const pairs = detectConfusionPairs(gapReport.topics, 2);
+        if (pairs.length === 0) return null;
+        return (
+          <Card className="space-y-3">
+            <div className="flex items-center justify-between pb-2.5 border-b border-brandBorder">
+              <div className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-accent" />
+                <h3 className="text-sm font-semibold text-brandText-primary">
+                  High-Risk Concept Confusion Pairs
+                </h3>
+              </div>
+              <span className="text-[11px] font-mono text-brandText-muted">
+                Detected via Jina 768d semantic proximity
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {pairs.map((pair, idx) => (
+                <div
+                  key={idx}
+                  className="rounded-control border border-brandBorder bg-surface-subtle p-3.5 flex items-center justify-between gap-3 text-xs"
+                >
+                  <div className="space-y-1 min-w-0">
+                    <div className="font-semibold text-brandText-primary truncate">
+                      {pair.topicA.topicTitle} ↔ {pair.topicB.topicTitle}
+                    </div>
+                    <p className="text-[11px] text-brandText-secondary">{pair.reason}</p>
+                  </div>
+                  <Link href={`/diagnostic?mode=drill&topicId=${encodeURIComponent(pair.topicA.topicId)}`} className="shrink-0">
+                    <Button variant="secondary" size="sm">
+                      <span>Contrast Drill</span>
+                    </Button>
+                  </Link>
+                </div>
+              ))}
+            </div>
           </Card>
         );
       })()}
