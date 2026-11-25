@@ -48,6 +48,7 @@ async function parseJsonResponse(res: Response): Promise<any> {
 interface WorkspaceContextType {
   profile: ProfileRow;
   workspace: WorkspaceRow;
+  workspaces: WorkspaceRow[];
   isLoggedIn: boolean;
   isDemo: boolean;
   isHydrating: boolean;
@@ -73,6 +74,8 @@ interface WorkspaceContextType {
   regenerateSchedule: (minutes: number) => RevisionPlanOverview;
   setRevisionSchedule: React.Dispatch<React.SetStateAction<RevisionPlanOverview>>;
   updateWorkspaceSettings: (settings: { title?: string; examDate?: string | null; dailyStudyMinutes?: number }) => Promise<void>;
+  createWorkspace: (params: { title: string; examDate?: string | null; dailyStudyMinutes?: number }) => Promise<WorkspaceRow | null>;
+  switchWorkspace: (workspaceId: string) => Promise<void>;
   resetToDemo: () => void;
 }
 
@@ -221,6 +224,7 @@ const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefin
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<ProfileRow>(DEMO_PROFILE);
   const [workspace, setWorkspace] = useState<WorkspaceRow>(DEMO_WORKSPACE);
+  const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([DEMO_WORKSPACE]);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(true);
   const [isDemo, setIsDemo] = useState<boolean>(true);
   const [isHydrating, setIsHydrating] = useState<boolean>(true);
@@ -247,8 +251,21 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           setIsDemo(restoredIsDemo);
           if (parsed.profile) setProfile(parsed.profile);
           setWorkspace(restoredWorkspace);
+          if (Array.isArray(parsed.workspaces) && parsed.workspaces.length > 0) {
+            setWorkspaces(parsed.workspaces);
+          } else {
+            setWorkspaces([restoredWorkspace]);
+          }
 
           if (!restoredIsDemo) {
+            fetch("/api/workspaces")
+              .then((r) => r.json())
+              .then((d) => {
+                if (d?.success && Array.isArray(d.workspaces) && d.workspaces.length > 0) {
+                  setWorkspaces(d.workspaces);
+                }
+              })
+              .catch(() => undefined);
             const restoredDocs: DocumentRow[] = Array.isArray(parsed.documents) ? parsed.documents : [];
             const restoredTopics: TopicRow[] = Array.isArray(parsed.topics) ? parsed.topics : [];
             const restoredPrereqs: TopicPrerequisiteRow[] = Array.isArray(parsed.prerequisites) ? parsed.prerequisites : [];
@@ -621,6 +638,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       updated_at: new Date().toISOString(),
     };
     setWorkspace(updated);
+    setWorkspaces((prev) => {
+      const exists = prev.some((w) => w.id === updated.id);
+      return exists ? prev.map((w) => (w.id === updated.id ? updated : w)) : [updated, ...prev];
+    });
     if (settings.dailyStudyMinutes) {
       setDailyMinutesState(settings.dailyStudyMinutes);
     }
@@ -808,6 +829,182 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     ]);
   };
 
+  const createWorkspace = async (params: {
+    title: string;
+    examDate?: string | null;
+    dailyStudyMinutes?: number;
+  }): Promise<WorkspaceRow | null> => {
+    try {
+      const res = await fetch("/api/workspaces", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: params.title,
+          examDate: params.examDate ?? null,
+          dailyStudyMinutes: params.dailyStudyMinutes ?? 60,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.workspace) return null;
+
+      const created: WorkspaceRow = data.workspace;
+      if (typeof window !== "undefined") {
+        // Snapshot current workspace before switching
+        try {
+          localStorage.setItem(
+            `gaplens_ws_${workspace.id}`,
+            JSON.stringify({
+              documents: isDemo ? [] : documents,
+              topics: isDemo ? [] : topics,
+              prerequisites: isDemo ? [] : prerequisites,
+              gapReport: isDemo ? undefined : gapReport,
+              revisionSchedule: isDemo ? undefined : revisionSchedule,
+              dailyMinutes,
+              completedTasks: completedTaskIds,
+            })
+          );
+        } catch {
+          // Ignore storage quota errors
+        }
+      }
+
+      const nextList = [created, ...workspaces.filter((w) => w.id !== created.id && w.id !== DEMO_WORKSPACE.id)];
+      const emptyReport = createEmptyGapReport(created);
+      const emptySchedule = createEmptySchedule(created);
+
+      setIsDemo(false);
+      setIsLoggedIn(true);
+      setWorkspace(created);
+      setWorkspaces(nextList);
+      setDocuments([]);
+      setTopics([]);
+      setPrerequisites([]);
+      setGapReport(emptyReport);
+      setRevisionSchedule(emptySchedule);
+      setDailyMinutesState(created.daily_study_minutes);
+      setCompletedTaskIds([]);
+      setRetestedTopicScores({});
+      setStoredAssessmentResults([]);
+
+      saveState({
+        isLoggedIn: true,
+        isDemo: false,
+        workspace: created,
+        documents: [],
+        topics: [],
+        prerequisites: [],
+        gapReport: emptyReport,
+        revisionSchedule: emptySchedule,
+        dailyMinutes: created.daily_study_minutes,
+        completedTasks: [],
+        retestedTopicScores: {},
+        storedAssessmentResults: [],
+      });
+      if (typeof window !== "undefined") {
+        try {
+          const raw = JSON.parse(localStorage.getItem("gaplens_auth_state") || "{}");
+          localStorage.setItem("gaplens_auth_state", JSON.stringify({ ...raw, workspaces: nextList }));
+        } catch {
+          // Ignore
+        }
+      }
+      return created;
+    } catch {
+      return null;
+    }
+  };
+
+  const switchWorkspace = async (workspaceId: string) => {
+    if (workspaceId === workspace.id) return;
+    if (workspaceId === DEMO_WORKSPACE.id) {
+      loginAsDemo();
+      return;
+    }
+
+    const target = workspaces.find((w) => w.id === workspaceId);
+    if (!target) return;
+
+    // Persist current workspace snapshot locally
+    if (typeof window !== "undefined" && !isDemo) {
+      try {
+        localStorage.setItem(
+          `gaplens_ws_${workspace.id}`,
+          JSON.stringify({
+            documents,
+            topics,
+            prerequisites,
+            gapReport,
+            revisionSchedule,
+            dailyMinutes,
+            completedTasks: completedTaskIds,
+          })
+        );
+      } catch {
+        // Ignore
+      }
+    }
+
+    let nextDocs: DocumentRow[] = [];
+    let nextTopics: TopicRow[] = [];
+    let nextPrereqs: TopicPrerequisiteRow[] = [];
+    let nextReport = createEmptyGapReport(target);
+    let nextSchedule = createEmptySchedule(target);
+    let nextMinutes = target.daily_study_minutes || 60;
+    let nextCompleted: string[] = [];
+
+    if (typeof window !== "undefined") {
+      try {
+        const cachedRaw = localStorage.getItem(`gaplens_ws_${target.id}`);
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw);
+          if (Array.isArray(cached.documents)) nextDocs = cached.documents;
+          if (Array.isArray(cached.topics)) nextTopics = cached.topics;
+          if (Array.isArray(cached.prerequisites)) nextPrereqs = cached.prerequisites;
+          if (cached.gapReport) nextReport = cached.gapReport;
+          if (cached.revisionSchedule) nextSchedule = cached.revisionSchedule;
+          if (cached.dailyMinutes) nextMinutes = cached.dailyMinutes;
+          if (Array.isArray(cached.completedTasks)) nextCompleted = cached.completedTasks;
+        }
+      } catch {
+        // Ignore
+      }
+    }
+
+    setIsDemo(false);
+    setIsLoggedIn(true);
+    setWorkspace(target);
+    setDocuments(nextDocs);
+    setTopics(nextTopics);
+    setPrerequisites(nextPrereqs);
+    setGapReport(nextReport);
+    setRevisionSchedule(nextSchedule);
+    setDailyMinutesState(nextMinutes);
+    setCompletedTaskIds(nextCompleted);
+
+    saveState({
+      isLoggedIn: true,
+      isDemo: false,
+      workspace: target,
+      documents: nextDocs,
+      topics: nextTopics,
+      prerequisites: nextPrereqs,
+      gapReport: nextReport,
+      revisionSchedule: nextSchedule,
+      dailyMinutes: nextMinutes,
+      completedTasks: nextCompleted,
+    });
+
+    // Hydrate from server if live Supabase has data for target workspace
+    fetch(`/api/gap-report?workspaceId=${target.id}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && !d.error && Array.isArray(d.topics) && d.topics.length > 0) {
+          setGapReport(d);
+        }
+      })
+      .catch(() => undefined);
+  };
+
   const resetToDemo = () => {
     loginAsDemo();
   };
@@ -817,6 +1014,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       value={{
         profile,
         workspace,
+        workspaces,
         isLoggedIn,
         isDemo,
         isHydrating,
@@ -842,6 +1040,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         regenerateSchedule,
         setRevisionSchedule,
         updateWorkspaceSettings,
+        createWorkspace,
+        switchWorkspace,
         resetToDemo,
       }}
     >

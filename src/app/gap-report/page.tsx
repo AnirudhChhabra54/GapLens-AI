@@ -21,6 +21,7 @@ import {
   Layers,
   CheckCircle2,
   Sparkles,
+  Download,
 } from "lucide-react";
 import { useWorkspace } from "@/components/workspace-context";
 import { RadialProgress } from "@/components/radial-progress";
@@ -153,6 +154,72 @@ export default function GapReportPage() {
           citation: b.citation,
         }));
 
+  const downloadSurvivalMarkdown = () => {
+    const weakTopics = gapReport.topics.filter(
+      (t) => t.classification === "weak" || t.classification === "medium"
+    );
+    const blindSpots = gapReport.blindSpots?.items || [];
+    const lines: string[] = [
+      `# ${gapReport.workspaceTitle || "Course"} — Exam-Day Survival Pack`,
+      `Generated: ${new Date().toLocaleDateString()}`,
+      `Preparation Coverage: ${Math.round(gapReport.readiness?.readinessScore ?? 0)}%`,
+      "",
+      "## High-Confidence Blind Spots (Fix First)",
+      ...(blindSpots.length > 0
+        ? blindSpots.map(
+            (b) =>
+              `### ${b.topicTitle}\n- **Trap Question:** ${b.questionText}\n- **Your Misconception:** ${b.studentResponse}\n- **Verified Answer:** ${b.correctAnswer}\n- **Source Citation:** ${b.citation?.documentName || "Course Notes"} (p. ${b.citation?.pageStart || 1}-${b.citation?.pageEnd || 1})\n- **Quote:** > ${b.evidenceQuote || b.citation?.quote || ""}\n`
+          )
+        : ["- No high-confidence blind spots recorded yet."]),
+      "",
+      "## Priority Weak & Developing Topics",
+      ...(weakTopics.length > 0
+        ? weakTopics.map(
+            (t) =>
+              `- **${t.topicTitle}** (${t.classification.toUpperCase()} • ${Math.round(t.masteryScore)}% mastery • ${Math.round((t.examWeight || 0) * 100)}% exam weight)`
+          )
+        : ["- All assessed topics are currently strong!"]),
+    ];
+
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "exam-survival-pack.md";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadAnkiCsv = () => {
+    const blindSpots = gapReport.blindSpots?.items || [];
+    const rows = [
+      ["Front", "Back", "Tags"],
+      ...(blindSpots.length > 0
+        ? blindSpots.map((b) => [
+            b.questionText,
+            `${b.correctAnswer} [Source: ${b.citation?.documentName || "Notes"} p.${b.citation?.pageStart || 1}]`,
+            `gaplens blind_spot ${b.topicTitle.replace(/\s+/g, "_").toLowerCase()}`,
+          ])
+        : gapReport.topics
+            .filter((t) => t.classification === "weak")
+            .map((t) => [
+              `Explain key mechanisms & edge cases of ${t.topicTitle}`,
+              `Current mastery: ${Math.round(t.masteryScore)}% — Review source unit ${t.unitModule || "Core"}`,
+              `gaplens weak_topic`,
+            ])),
+    ];
+    const csv = rows
+      .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "gaplens-anki-flashcards.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-8 max-w-7xl mx-auto">
       {/* =========================================================================
@@ -164,7 +231,25 @@ export default function GapReportPage() {
           description="See which topics need attention, what your answers reveal and where to focus next."
         />
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={downloadSurvivalMarkdown}
+            title="Download Markdown cheat sheet of weak topics and blind spots"
+          >
+            <Download className="h-3.5 w-3.5" />
+            <span>Cheat sheet (.md)</span>
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={downloadAnkiCsv}
+            title="Export blind spots as Anki-ready CSV flashcards"
+          >
+            <Download className="h-3.5 w-3.5" />
+            <span>Anki deck (.csv)</span>
+          </Button>
           <Link href="/planner">
             <Button variant="primary" size="sm">
               <span>View revision plan</span>

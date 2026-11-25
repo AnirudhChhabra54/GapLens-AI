@@ -7,16 +7,18 @@
 // ==============================================================================
 
 import React, { useState } from "react";
-import { GitBranch, AlertTriangle, ArrowRight, Layers, CheckCircle2 } from "lucide-react";
+import { GitBranch, AlertTriangle, ArrowRight, Layers, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TopicRow, TopicPrerequisiteRow } from "@/types/database";
-import { Card, StatusBadge } from "@/components/ui/design-system";
+import { Card } from "@/components/ui/design-system";
 
 interface PrerequisiteGraphProps {
   topics: TopicRow[];
   prerequisites: TopicPrerequisiteRow[];
   className?: string;
   onSelectTopic?: (topic: TopicRow) => void;
+  onAddPrerequisite?: (topicId: string, prereqTopicId: string) => Promise<void> | void;
+  onRemovePrerequisite?: (prereqId: string) => Promise<void> | void;
 }
 
 export function PrerequisiteGraph({
@@ -24,8 +26,12 @@ export function PrerequisiteGraph({
   prerequisites,
   className,
   onSelectTopic,
+  onAddPrerequisite,
+  onRemovePrerequisite,
 }: PrerequisiteGraphProps) {
   const [selectedTopic, setSelectedTopic] = useState<TopicRow | null>(topics[0] || null);
+  const [newPrereqId, setNewPrereqId] = useState<string>("");
+  const [savingEdge, setSavingEdge] = useState(false);
 
   // Group topics by Unit/Module
   const unitsMap = new Map<string, TopicRow[]>();
@@ -190,21 +196,83 @@ export function PrerequisiteGraph({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {/* Direct Prerequisites */}
-            <div className="bg-surface-subtle p-3 rounded-control border border-brandBorder">
-              <span className="text-[11px] font-semibold text-brandText-secondary block mb-1.5 flex items-center gap-1.5 font-mono uppercase tracking-wider">
+            <div className="bg-surface-subtle p-3 rounded-control border border-brandBorder space-y-2">
+              <span className="text-[11px] font-semibold text-brandText-secondary block flex items-center gap-1.5 font-mono uppercase tracking-wider">
                 <ArrowRight className="h-3 w-3 text-accent rotate-180" /> Direct Prerequisites:
               </span>
               {getPrereqsForTopic(selectedTopic.id).length === 0 ? (
                 <p className="text-brandText-muted italic text-[11px]">Foundational entry topic (zero prerequisites required).</p>
               ) : (
                 <ul className="space-y-1">
-                  {getPrereqsForTopic(selectedTopic.id).map((p) => (
-                    <li key={p.id} className="text-brandText-primary flex items-center gap-1.5 font-medium">
-                      <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-                      {p.title} ({Math.round(p.current_mastery ?? 45)}%)
-                    </li>
-                  ))}
+                  {getPrereqsForTopic(selectedTopic.id).map((p) => {
+                    const edge = prerequisites.find(
+                      (pr) => pr.topic_id === selectedTopic.id && pr.prerequisite_topic_id === p.id
+                    );
+                    return (
+                      <li key={p.id} className="text-brandText-primary flex items-center justify-between gap-1.5 font-medium">
+                        <span className="flex items-center gap-1.5 min-w-0 truncate">
+                          <span className="h-1.5 w-1.5 rounded-full bg-accent shrink-0" />
+                          <span className="truncate">{p.title} ({Math.round(p.current_mastery ?? 45)}%)</span>
+                        </span>
+                        {onRemovePrerequisite && edge && (
+                          <button
+                            type="button"
+                            onClick={() => onRemovePrerequisite(edge.id)}
+                            className="p-0.5 text-brandText-muted hover:text-status-danger rounded transition-colors shrink-0"
+                            title="Remove prerequisite link"
+                            aria-label={`Remove prerequisite ${p.title}`}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
+              )}
+
+              {onAddPrerequisite && topics.length > 1 && (
+                <div className="pt-2 border-t border-brandBorder/60 flex items-center gap-1.5">
+                  <select
+                    value={newPrereqId}
+                    onChange={(e) => setNewPrereqId(e.target.value)}
+                    className="flex-1 min-w-0 rounded-control border border-brandBorder bg-surface px-2 py-1 text-[11px] text-brandText-primary focus:border-accent focus:outline-none"
+                    aria-label="Select prerequisite topic to link"
+                  >
+                    <option value="">+ Add prerequisite...</option>
+                    {topics
+                      .filter(
+                        (t) =>
+                          t.id !== selectedTopic.id &&
+                          !prerequisites.some(
+                            (p) => p.topic_id === selectedTopic.id && p.prerequisite_topic_id === t.id
+                          )
+                      )
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.title}
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!newPrereqId || savingEdge}
+                    onClick={async () => {
+                      if (!newPrereqId) return;
+                      setSavingEdge(true);
+                      try {
+                        await onAddPrerequisite(selectedTopic.id, newPrereqId);
+                        setNewPrereqId("");
+                      } finally {
+                        setSavingEdge(false);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-control bg-accent text-white text-[11px] font-medium hover:bg-accent-hover disabled:opacity-50 transition-colors shrink-0"
+                  >
+                    <Plus className="h-3 w-3" />
+                    <span>Link</span>
+                  </button>
+                </div>
               )}
             </div>
 

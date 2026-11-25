@@ -19,6 +19,7 @@ import {
   Sparkles,
   User,
   Settings,
+  Plus,
 } from "lucide-react";
 import { useWorkspace } from "@/components/workspace-context";
 import { cn } from "@/lib/utils";
@@ -35,10 +36,26 @@ const NAV_ITEMS = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { workspace, profile, isLoggedIn, isDemo, isHydrating, loginAsDemo, logout, updateWorkspaceSettings } = useWorkspace();
+  const {
+    workspace,
+    workspaces,
+    profile,
+    isLoggedIn,
+    isDemo,
+    isHydrating,
+    loginAsDemo,
+    logout,
+    updateWorkspaceSettings,
+    createWorkspace,
+    switchWorkspace,
+  } = useWorkspace();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [newCourseOpen, setNewCourseOpen] = useState(false);
+  const [newCourseTitle, setNewCourseTitle] = useState("");
+  const [newCourseExamDate, setNewCourseExamDate] = useState("");
+  const [creatingCourse, setCreatingCourse] = useState(false);
   const [settingsTitle, setSettingsTitle] = useState(workspace?.title || "");
   const [settingsExamDate, setSettingsExamDate] = useState(workspace?.exam_date || "");
   const [settingsMinutes, setSettingsMinutes] = useState(workspace?.daily_study_minutes || 60);
@@ -150,15 +167,41 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
         </div>
 
-        {/* Active Course Selector */}
-        <div className="p-3 border-b border-brandBorder bg-surface-subtle/50">
-          <div className="px-3 py-2 rounded-card border border-brandBorder bg-surface text-left">
-            <span className="text-[11px] font-medium text-brandText-muted block uppercase tracking-wider mb-0.5">
-              Active Course
-            </span>
-            <span className="text-xs font-semibold text-brandText-primary block truncate">
-              {workspace?.title || "Operating Systems (CS-301)"}
-            </span>
+        {/* Active Course Switcher */}
+        <div className="p-3 border-b border-brandBorder bg-surface-subtle/50 space-y-2">
+          <div className="px-3 py-2 rounded-card border border-brandBorder bg-surface text-left space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-medium text-brandText-muted uppercase tracking-wider">
+                Active Course
+              </span>
+              <button
+                type="button"
+                onClick={() => setNewCourseOpen(true)}
+                className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-accent hover:underline"
+                title="Create new course workspace"
+              >
+                <Plus className="h-3 w-3" />
+                <span>New</span>
+              </button>
+            </div>
+            {workspaces.length > 1 ? (
+              <select
+                value={workspace?.id || ""}
+                onChange={(e) => switchWorkspace(e.target.value)}
+                className="w-full text-xs font-semibold text-brandText-primary bg-transparent border-none p-0 focus:outline-none cursor-pointer truncate"
+                aria-label="Switch active course workspace"
+              >
+                {workspaces.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.title}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="text-xs font-semibold text-brandText-primary block truncate">
+                {workspace?.title || "Operating Systems (CS-301)"}
+              </span>
+            )}
           </div>
         </div>
 
@@ -435,6 +478,98 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   className="px-4 py-1.5 rounded-control bg-accent hover:bg-accent-hover text-white text-xs font-semibold shadow-subtle transition-all disabled:opacity-50"
                 >
                   {savingSettings ? "Saving..." : "Save settings"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* New Course Workspace Modal */}
+      {newCourseOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-card border border-brandBorder bg-surface p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-brandBorder pb-3">
+              <div className="flex items-center gap-2">
+                <Plus className="h-4 w-4 text-accent" />
+                <h3 className="text-sm font-semibold text-brandText-primary">
+                  Add New Course Workspace
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNewCourseOpen(false)}
+                className="rounded-control p-1 text-brandText-muted hover:text-brandText-primary transition"
+                aria-label="Close new course modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!newCourseTitle.trim()) return;
+                setCreatingCourse(true);
+                try {
+                  const created = await createWorkspace({
+                    title: newCourseTitle.trim(),
+                    examDate: newCourseExamDate || null,
+                    dailyStudyMinutes: 60,
+                  });
+                  if (created) {
+                    setNewCourseTitle("");
+                    setNewCourseExamDate("");
+                    setNewCourseOpen(false);
+                    router.push("/materials");
+                  }
+                } finally {
+                  setCreatingCourse(false);
+                }
+              }}
+              className="space-y-4 text-left"
+            >
+              <div>
+                <label className="block text-xs font-semibold text-brandText-primary mb-1">
+                  Course Name
+                </label>
+                <input
+                  type="text"
+                  value={newCourseTitle}
+                  onChange={(e) => setNewCourseTitle(e.target.value)}
+                  placeholder="e.g. GATE Computer Science 2027"
+                  className="w-full px-3 py-2 text-xs rounded-control border border-brandBorder bg-surface-subtle focus:bg-surface focus:border-accent focus:outline-none transition-colors"
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-brandText-primary mb-1">
+                  Target Exam Date (Optional)
+                </label>
+                <input
+                  type="date"
+                  value={newCourseExamDate}
+                  onChange={(e) => setNewCourseExamDate(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-control border border-brandBorder bg-surface-subtle focus:bg-surface focus:border-accent focus:outline-none transition-colors"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-brandBorder">
+                <button
+                  type="button"
+                  onClick={() => setNewCourseOpen(false)}
+                  className="px-3 py-1.5 rounded-control text-xs font-medium text-brandText-secondary hover:bg-surface-subtle transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingCourse}
+                  className="px-4 py-1.5 rounded-control bg-accent hover:bg-accent-hover text-white text-xs font-semibold shadow-subtle transition-all disabled:opacity-50"
+                >
+                  {creatingCourse ? "Creating..." : "Create course"}
                 </button>
               </div>
             </form>

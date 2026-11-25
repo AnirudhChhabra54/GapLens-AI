@@ -1127,7 +1127,36 @@ export default function MaterialsPage() {
 
         {/* View 1: Dependency map */}
         {activeTab === "dag" && (
-          <PrerequisiteGraph topics={topics} prerequisites={isDemo ? DEMO_PREREQUISITES : (prerequisites || [])} />
+          <PrerequisiteGraph
+            topics={topics}
+            prerequisites={isDemo ? DEMO_PREREQUISITES : (prerequisites || [])}
+            onAddPrerequisite={async (topicId, prereqTopicId) => {
+              const res = await fetch("/api/topics/prerequisites", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  workspaceId: workspace?.id || "10000000-0000-0000-0000-000000000001",
+                  topicId,
+                  prerequisiteTopicId: prereqTopicId,
+                }),
+              });
+              const data = await res.json();
+              if (res.ok && data.prerequisite) {
+                const current = isDemo ? DEMO_PREREQUISITES : (prerequisites || []);
+                setWorkspacePrerequisites([...current, data.prerequisite]);
+                setActionSuccess("Prerequisite dependency linked.");
+              }
+            }}
+            onRemovePrerequisite={async (prereqId) => {
+              const wsId = workspace?.id || "10000000-0000-0000-0000-000000000001";
+              await fetch(`/api/topics/prerequisites?id=${encodeURIComponent(prereqId)}&workspaceId=${encodeURIComponent(wsId)}`, {
+                method: "DELETE",
+              }).catch(() => undefined);
+              const current = isDemo ? DEMO_PREREQUISITES : (prerequisites || []);
+              setWorkspacePrerequisites(current.filter((p) => p.id !== prereqId));
+              setActionSuccess("Prerequisite dependency removed.");
+            }}
+          />
         )}
 
         {/* View 2: Curriculum outline */}
@@ -1373,9 +1402,26 @@ export default function MaterialsPage() {
               </p>
 
               <div>
-                <label className="block text-xs font-semibold text-brandText-primary mb-1">
-                  Extracted Text Content
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-brandText-primary">
+                    Extracted Text Content
+                  </label>
+                  <label className="text-[11px] font-mono text-accent hover:underline cursor-pointer">
+                    <span>Import .txt / .md file</span>
+                    <input
+                      type="file"
+                      accept=".txt,.md,.markdown"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        if (f) {
+                          const txt = await f.text();
+                          setOcrInputText(txt);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
                 <textarea
                   value={ocrInputText}
                   onChange={(e) => setOcrInputText(e.target.value)}
